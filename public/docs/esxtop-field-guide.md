@@ -100,7 +100,7 @@ To build a storage-only rc:
 6. Press uppercase `W` once and save to a durable path, for example `/vmfs/volumes/datastore1/esxtop-storage.rc`.
 7. Validate with `-n 2` and inspect the header for adapter, device and VM-disk counters.
 
-A real ESXi 6.0 `.esxtop60rc` looks like this:
+A real ESXi 8.0 U3 `.esxtop60rc` looks like this:
 
 | Line | Content | Meaning |
 |---|---|---|
@@ -112,10 +112,10 @@ A real ESXi 6.0 `.esxtop60rc` looks like this:
 | 6 | `abcdefghijklmnopq` | Network — all hidden |
 | 7 | `abcdef` | Interrupt — all hidden |
 | 8 | `abcdef` | CPU Power — all hidden |
-| 9–10 | `AbcDEFGHijKlmN` / `ABCdEf` | Additional release-specific panel layouts in this ESXi 6.0 file |
+| 9–10 | `AbcDEFGHijKlmN` / `ABCdEf` | Additional release-specific panel layouts in this ESXi 8.0 U3 file |
 | 11 | `5p` | Options: 5-second delay and the starting panel (`p`, CPU Power on releases that expose it) |
 
-The number of panel-layout lines is release-specific; the last line is the options line. Uppercase letters mark selected fields and lowercase letters mark hidden fields, but do not hand-edit the file. Always save it with `W`.
+The number of panel-layout lines is release-specific; the last line is the options line. The `60` in `.esxtop60rc` is historical — the same default filename can still be used on newer releases, including ESXi 8.0 U3. Uppercase letters mark selected fields and lowercase letters mark hidden fields, but do not hand-edit the file. Always save it with `W`.
 
 Important details:
 

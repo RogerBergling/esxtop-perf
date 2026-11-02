@@ -94,6 +94,8 @@ def main() -> int:
     check("Multiple storage panels in one rc file" in guide, "field guide lacks multi-panel rc guidance")
     check("There is no separate Datastore panel" in guide, "field guide must explain that Datastore is not an esxtop panel")
     check("ABCDEfGHIJkl" in guide, "field guide lacks the annotated .esxtop60rc example")
+    check("ESXi 8.0 U3" in guide, "field guide must identify the real rc example as ESXi 8.0 U3")
+    check("ESXi 6.0" not in guide, "field guide must not label the ESXi 8.0 U3 rc as ESXi 6.0")
     check("## 7. Storage counters" in guide, "field guide lacks storage section")
     for url in (
         "https://knowledge.broadcom.com/external/article/382249/",
@@ -130,8 +132,9 @@ def main() -> int:
         check(marker in app_js, f"app.js missing route/feature marker: {marker}")
 
     pages_js = (ROOT / "public/assets/js/pages.js").read_text(encoding="utf-8")
-    for marker in ("Storage bundle: Adapter + Device + VM Disk", "There is no separate Datastore panel in esxtop", "Anatomy of <code>.esxtop60rc</code>", "ABCDEfGHIJkl"):
+    for marker in ("Storage bundle: Adapter + Device + VM Disk", "There is no separate Datastore panel in esxtop", "Real file · ESXi 8.0 U3", "Anatomy of a real <code>.esxtop60rc</code>", "ABCDEfGHIJkl"):
         check(marker in pages_js, f"Capture page missing multi-panel marker: {marker}")
+    check("Real file · ESXi 6.0" not in pages_js, "Capture page must not label the ESXi 8.0 U3 rc as ESXi 6.0")
 
     if FAILURES:
         print(f"FAILED: {len(FAILURES)} issue(s) across {CHECKS} checks")

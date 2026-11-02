@@ -1528,9 +1528,9 @@ head -1 /vmfs/volumes/datastore1/esxtop-test.csv \
       </div>
 
       <div class="card flat mt-1">
-        <div class="card-kicker">Real file · ESXi 6.0</div>
-        <h3>Anatomy of <code>.esxtop60rc</code></h3>
-        <p>Here is a real ESXi 6.0 file. The number of panel-layout lines changes between ESXi releases; the last line is the options line. Uppercase letters mark selected fields and lowercase letters mark hidden fields, but do not hand-edit this file — always save it with <code>W</code>.</p>
+        <div class="card-kicker">Real file · ESXi 8.0 U3</div>
+        <h3>Anatomy of a real <code>.esxtop60rc</code></h3>
+        <p>Here is a real ESXi 8.0 U3 file. The <code>.esxtop60rc</code> name is historical and is still the default filename on newer releases. The number of panel-layout lines changes between ESXi releases; the last line is the options line. Uppercase letters mark selected fields and lowercase letters mark hidden fields, but do not hand-edit this file — always save it with <code>W</code>.</p>
         <table class="data compact-table"><tbody>
           <tr><td class="mono">1</td><td class="mono">abcdefghij</td><td>CPU</td></tr>
           <tr><td class="mono">2</td><td class="mono">abcdefghijklmnopq</td><td>Memory</td></tr>
@@ -1540,7 +1540,7 @@ head -1 /vmfs/volumes/datastore1/esxtop-test.csv \
           <tr><td class="mono">6</td><td class="mono">abcdefghijklmnopq</td><td>Network — all hidden</td></tr>
           <tr><td class="mono">7</td><td class="mono">abcdef</td><td>Interrupt — all hidden</td></tr>
           <tr><td class="mono">8</td><td class="mono">abcdef</td><td>CPU Power — all hidden</td></tr>
-          <tr><td class="mono">9–10</td><td class="mono">AbcDEFGHijKlmN<br>ABCdEf</td><td>Additional release-specific panel layouts in this ESXi 6.0 file</td></tr>
+          <tr><td class="mono">9–10</td><td class="mono">AbcDEFGHijKlmN<br>ABCdEf</td><td>Additional release-specific panel layouts in this ESXi 8.0 U3 file</td></tr>
           <tr><td class="mono">11</td><td class="mono">5p</td><td>Options: 5-second delay and the starting panel (<code>p</code>, CPU Power on releases that expose it)</td></tr>
         </tbody></table>
         <p class="dim">This example already has the storage panels partly enabled. If you want only storage, clear the fields in the other panels before pressing <code>W</code>. The exact field letters and line count are release-specific; use the interactive <code>f</code> panel as the source of truth.</p>
