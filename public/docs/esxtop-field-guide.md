@@ -62,6 +62,80 @@ The application defaults to 20,000,000 data cells, 200,000 metric columns and 50
 
 Sample arrays are not sent to the browser with the first response. The parser stores them in a short-lived SQLite session; charts request only the series they display. This keeps the initial payload and browser memory small. Sessions expire after 30 minutes by default (`ESXTOP_SESSION_TTL_MINUTES`) and are deleted at shutdown.
 
+### Sizing large captures
+
+The defaults are safety guardrails, not a statement about available RAM. A 145,697-column × 100-sample capture measured about **1.23 GiB peak RSS**. A useful planning formula is:
+
+```text
+peak memory ≈ 0.6 GB fixed overhead + data cells × 48 bytes
+```
+
+| Capture at 146,274 columns | Data cells | Approx. peak |
+|---|---:|---:|
+| 100 samples | 14.6M | ~1.3 GB |
+| 300 samples | 43.9M | ~2.6 GB |
+| 500 samples | 73.1M | ~3.9 GB |
+| 683 samples | 99.9M | ~5.1 GB |
+| 1,000 samples | 146M | ~7.2 GB |
+| 1,200 samples | 175M | ~8.5 GB |
+| 1,400 samples | 205M | ~10 GB — too close |
+
+The estimate covers parsing, analysis and the temporary SQLite session. It does not include browser memory. Leave 20–30% headroom below the container memory limit.
+
+At 146,274 columns, the cell limit determines the sample count:
+
+| `ESXTOP_MAX_CELLS` | Approx. samples at 146k columns |
+|---:|---:|
+| 20,000,000 (default) | 136 |
+| 40,000,000 | 273 |
+| 80,000,000 | 546 |
+| 100,000,000 | 683 |
+| 150,000,000 | 1,025 |
+| 200,000,000 | 1,367 — not recommended with 10 GB |
+
+**Giving the container more memory does not raise `ESXTOP_MAX_CELLS`.** You must change both the memory limit and the cell guardrail.
+
+Recommended starting points:
+
+| Container memory | `ESXTOP_MAX_CELLS` | Expected peak | Notes |
+|---:|---:|---:|---|
+| 2 GB | 20,000,000 | ~1.6 GB | Current default; tight for long captures |
+| 4 GB | 40,000,000 | ~2.6 GB | Small single-user box |
+| 8 GB | 80,000,000 | ~4.4 GB | Good headroom |
+| 10 GB | 100,000,000 | ~5.4 GB | Comfortable |
+| 10 GB | 150,000,000 | ~7.8 GB | Upper safe range; monitor |
+
+A 10 GB Compose example:
+
+```yaml
+services:
+  esxtop-lens:
+    mem_limit: 10g
+    mem_reservation: 1g
+    memswap_limit: 10g
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=6g
+    environment:
+      ESXTOP_MAX_SERIES: "200000"
+      ESXTOP_MAX_CELLS: "100000000"
+      ESXTOP_MAX_UPLOAD_MB: "2048"
+      ESXTOP_MAX_DECOMPRESSED_MB: "4096"
+      ESXTOP_MAX_SESSIONS: "2"
+```
+
+Also account for:
+
+- **Restart required:** set these values in the Compose environment or `.env`, then recreate the container. A running process keeps the limits it read at startup.
+- **Columns:** `ESXTOP_MAX_SERIES` is 200,000; the observed 146,274-column capture fits. Raise it only for a wider capture.
+- **Rows:** `ESXTOP_MAX_ROWS` is 50,000. At 146k columns the cell limit binds long before this; it matters mainly for narrow captures.
+- **`/tmp`:** the temporary upload and SQLite session both live there. The default 2 GB tmpfs is not enough for a 100M-cell capture; use 4–6 GB.
+- **Upload and decompressed size:** `ESXTOP_MAX_UPLOAD_MB` and `ESXTOP_MAX_DECOMPRESSED_MB` apply before parsing. A long uncompressed CSV can exceed the 512 MB upload default even when RAM is available.
+- **Sessions:** each retained session keeps a temporary SQLite file. Lower `ESXTOP_MAX_SESSIONS` when captures are large.
+- **Browser:** 146k series produce a large metadata payload. Sample arrays are lazy-loaded, but use a desktop browser with several GB free.
+- **Focused capture:** reducing fields with a `-c` rc file is almost always better than raising every limit. Fewer columns means fewer cells, less memory and a smaller file.
+
+Raise limits only after checking `docker stats` and the actual sample count. If the container reaches its memory limit, it is killed; the guardrail should stop the capture first.
+
 ### Focused capture with `-c`
 
 The full command with `-a` is the broad first look. When you need a smaller, repeatable capture — for example disk adapter, disk device and VM disk latency — prepare a configuration file interactively.

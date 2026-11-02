@@ -261,6 +261,45 @@ These are safety settings, not esxtop limits. Increase them for a larger single-
 
 The 8M-cell/50k-column caps from the earlier version are gone. The 200,000-column ceiling covers the observed 145,697-column capture. The 20,000,000-cell limit allows 100 samples at the full 200,000-column width, or 137 samples of the observed 145,697-column capture; raise `ESXTOP_MAX_CELLS` for longer captures when the container has enough memory and `/tmp` space.
 
+### Sizing large captures
+
+A 145,697-column × 100-sample capture measured about **1.23 GiB peak RSS**. Plan with:
+
+```text
+peak memory ≈ 0.6 GB fixed overhead + data cells × 48 bytes
+```
+
+At 146,274 columns:
+
+| Samples | Data cells | Approx. peak |
+|---:|---:|---:|
+| 100 | 14.6M | ~1.3 GB |
+| 300 | 43.9M | ~2.6 GB |
+| 500 | 73.1M | ~3.9 GB |
+| 683 | 99.9M | ~5.1 GB |
+| 1,000 | 146M | ~7.2 GB |
+| 1,200 | 175M | ~8.5 GB |
+
+**More container RAM does not raise `ESXTOP_MAX_CELLS`.** Change both. A sensible 10 GB setup is:
+
+```yaml
+services:
+  esxtop-lens:
+    mem_limit: 10g
+    mem_reservation: 1g
+    memswap_limit: 10g
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=6g
+    environment:
+      ESXTOP_MAX_SERIES: "200000"
+      ESXTOP_MAX_CELLS: "100000000"
+      ESXTOP_MAX_UPLOAD_MB: "2048"
+      ESXTOP_MAX_DECOMPRESSED_MB: "4096"
+      ESXTOP_MAX_SESSIONS: "2"
+```
+
+`ESXTOP_MAX_CELLS=100000000` is comfortable at about 5–6 GB peak and allows 683 samples at 146k columns. `150000000` is the upper safe range at about 7.8 GB peak and 1,025 samples; monitor `docker stats`. Do not use 200M cells with 10 GB. Also raise the `/tmp` tmpfs (the upload and SQLite session live there), upload/decompressed limits for long raw CSVs, and lower concurrent sessions when captures are large. Set the values in `.env` or the Compose environment and recreate the container — a running process keeps its old limits. The [field guide](public/docs/esxtop-field-guide.md#sizing-large-captures) has the full table, sizing notes and the focused-capture alternative.
+
 ## API
 
 | Endpoint | Method | Description |

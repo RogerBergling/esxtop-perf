@@ -94,6 +94,9 @@ def main() -> int:
     check("Multiple storage panels in one rc file" in guide, "field guide lacks multi-panel rc guidance")
     check("There is no separate Datastore panel" in guide, "field guide must explain that Datastore is not an esxtop panel")
     check("ABCDEfGHIJkl" in guide, "field guide lacks the annotated .esxtop60rc example")
+    check("### Sizing large captures" in guide, "field guide lacks large-capture sizing guidance")
+    check("1.23 GiB" in guide, "field guide lacks the measured memory baseline")
+    check("ESXTOP_MAX_CELLS: \"100000000\"" in guide, "field guide lacks the 10 GB / 100M-cell example")
     check("ESXi 8.0 U3" in guide, "field guide must identify the real rc example as ESXi 8.0 U3")
     check("ESXi 6.0" not in guide, "field guide must not label the ESXi 8.0 U3 rc as ESXi 6.0")
     check("## 7. Storage counters" in guide, "field guide lacks storage section")
@@ -107,6 +110,8 @@ def main() -> int:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     for phrase in ("Quick start", "Docker", "GHCR", "Watchtower", "Validation", "Project structure"):
         check(phrase.lower() in readme.lower(), f"README is missing section/keyword: {phrase}")
+    check("### Sizing large captures" in readme, "README lacks large-capture sizing guidance")
+    check("peak memory ≈ 0.6 GB" in readme, "README lacks the memory sizing formula")
     check("ghcr.io/rogerbergling/esxtop-perf" in readme, "README does not name the GHCR image")
 
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
@@ -132,7 +137,7 @@ def main() -> int:
         check(marker in app_js, f"app.js missing route/feature marker: {marker}")
 
     pages_js = (ROOT / "public/assets/js/pages.js").read_text(encoding="utf-8")
-    for marker in ("Storage bundle: Adapter + Device + VM Disk", "There is no separate Datastore panel in esxtop", "Real file · ESXi 8.0 U3", "Anatomy of a real <code>.esxtop60rc</code>", "ABCDEfGHIJkl"):
+    for marker in ("Storage bundle: Adapter + Device + VM Disk", "There is no separate Datastore panel in esxtop", "Real file · ESXi 8.0 U3", "Anatomy of a real <code>.esxtop60rc</code>", "ABCDEfGHIJkl", "Large sample count?", "Sizing large captures"):
         check(marker in pages_js, f"Capture page missing multi-panel marker: {marker}")
     check("Real file · ESXi 6.0" not in pages_js, "Capture page must not label the ESXi 8.0 U3 rc as ESXi 6.0")
 
