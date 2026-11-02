@@ -1,6 +1,7 @@
 /* ESXtop Lens application shell, hash router and upload lifecycle. */
 
 import {
+  renderCapture,
   renderCategory,
   renderGuide,
   renderImport,
@@ -42,6 +43,7 @@ let parseTimer = null;
 
 const NAV_ITEMS = [
   ['overview', 'Overview', '#/'],
+  ['capture', 'Capture', '#/capture'],
   ['cpu', 'CPU', '#/cpu'],
   ['memory', 'Memory', '#/memory'],
   ['storage', 'Storage', '#/storage'],
@@ -99,7 +101,7 @@ function updateChrome(route) {
   if (state.doc) {
     nav.innerHTML = NAV_ITEMS.map(([key, label, href]) => `<a href="${href}" data-nav="${key}">${label}</a>`).join('');
   } else {
-    nav.innerHTML = `<a href="#/import" data-nav="import">Import</a><a href="#/guide" data-nav="guide">Field guide</a>`;
+    nav.innerHTML = `<a href="#/import" data-nav="import">Import</a><a href="#/capture" data-nav="capture">Capture manual</a><a href="#/guide" data-nav="guide">Field guide</a>`;
   }
   const active = activeNav(route);
   nav.querySelectorAll('a').forEach((link) => {
@@ -107,14 +109,14 @@ function updateChrome(route) {
     const isActive = key === active || (key === 'vms' && active === 'vms') || (key === 'overview' && active === 'overview');
     link.classList.toggle('active', isActive);
   });
-  const showBar = Boolean(state.doc) && !['import', 'guide'].includes(route.segments[0] || '');
+  const showBar = Boolean(state.doc) && !['import', 'guide', 'capture'].includes(route.segments[0] || '');
   captureBar.hidden = !showBar;
   if (showBar) captureBar.innerHTML = captureLine(state.doc);
   newCapture.hidden = !state.doc;
   if (state.doc) {
     const title = {
       overview: 'Overview', cpu: 'CPU', memory: 'Memory', storage: 'Storage', network: 'Network',
-      vms: 'Virtual machines', insights: 'Findings', metrics: 'Metric explorer', vm: 'VM detail',
+      vms: 'Virtual machines', insights: 'Findings', metrics: 'Metric explorer', vm: 'VM detail', capture: 'Capture manual',
       metric: 'Metric detail', series: 'Signal detail',
     }[active] || 'Capture';
     document.title = `${title} · ${state.doc.meta.host || 'ESXi'} · ESXtop Lens`;
@@ -271,6 +273,7 @@ async function loadDemo() {
 
 function pageFor(route) {
   if (route.segments[0] === 'guide') return renderGuide;
+  if (route.segments[0] === 'capture') return renderCapture;
   if (!state.doc) return renderImport;
   const first = route.segments[0] || 'overview';
   if (first === 'overview' || route.segments.length === 0) return renderOverview;
@@ -293,7 +296,7 @@ async function render() {
   updateChrome(route);
   const page = state.doc
     ? pageFor(route)
-    : (route.segments[0] === 'guide' ? renderGuide : renderImport);
+    : (route.segments[0] === 'guide' ? renderGuide : route.segments[0] === 'capture' ? renderCapture : renderImport);
   const context = {
     state,
     doc: state.doc,

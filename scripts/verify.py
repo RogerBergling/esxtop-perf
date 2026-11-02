@@ -64,9 +64,9 @@ def main() -> int:
         FAILURES.append(f"public/version.json is not valid JSON: {exc}")
     check(bool(version.get("version")), "public/version.json must contain a version")
     check(version.get("version") != "0.0.0", "version must not be a placeholder")
-    check("1.1.0" in (ROOT / "esxtop_perf/catalog.py").read_text(encoding="utf-8"), "APP_VERSION is not 1.1.0")
+    check("1.2.0" in (ROOT / "esxtop_perf/catalog.py").read_text(encoding="utf-8"), "APP_VERSION is not 1.2.0")
     package = (ROOT / "esxtop_perf/catalog.py").read_text(encoding="utf-8")
-    check('APP_VERSION = "1.1.0"' in package, "catalog APP_VERSION must match public/version.json")
+    check('APP_VERSION = "1.2.0"' in package, "catalog APP_VERSION must match public/version.json")
 
     index = (ROOT / "public/index.html").read_text(encoding="utf-8")
     check("/assets/css/app.css" in index, "index.html does not load the stylesheet")
@@ -90,6 +90,7 @@ def main() -> int:
     guide = (ROOT / "public/docs/esxtop-field-guide.md").read_text(encoding="utf-8")
     check("## 2. The capture command, token by token" in guide, "field guide lacks capture-command section")
     check("## 5. CPU counters" in guide, "field guide lacks CPU section")
+    check("### Focused capture with `-c`" in guide, "field guide lacks focused capture manual")
     check("## 7. Storage counters" in guide, "field guide lacks storage section")
     for url in (
         "https://knowledge.broadcom.com/external/article/382249/",
@@ -119,7 +120,7 @@ def main() -> int:
 
     # A few frontend route smoke assertions are cheap and catch accidental drift.
     app_js = (ROOT / "public/assets/js/app.js").read_text(encoding="utf-8")
-    for marker in ("#/guide", "#/metrics", "#/insights", "renderOverview", "uploadFile", "ensureSeries", "/api/series"):
+    for marker in ("#/guide", "#/capture", "#/metrics", "#/insights", "renderOverview", "renderCapture", "uploadFile", "ensureSeries", "/api/series"):
         check(marker in app_js, f"app.js missing route/feature marker: {marker}")
 
     if FAILURES:

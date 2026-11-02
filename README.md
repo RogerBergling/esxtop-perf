@@ -29,6 +29,7 @@ Both screenshots use the bundled synthetic demo capture. The demo contains inten
 - **Green / yellow / red** — a transparent rule engine with sustained percentile checks, not a single-spike alarm.
 - **Evidence and references** — every finding shows the observed value, guardrail, why it matters, a next action and Broadcom/Yellow Bricks sources.
 - **Written field guide** — the capture command explained token by token, CSV anatomy, counter semantics, playbooks and caveats.
+- **Focused capture manual** — a step-by-step `-c` workflow with a command builder, verification recipe and the traps that make a configuration silently ineffective.
 - **Local-only processing** — captures are parsed into a short-lived local session. No analytics, no third-party upload; the session is removed after 30 minutes or on restart.
 - **Docker + GHCR + Watchtower** — multi-arch image publishing and opt-in automatic updates, following the same delivery pattern as [Learning](https://github.com/RogerBergling/Learning).
 
@@ -89,7 +90,7 @@ The launcher serves the app on the first free port in **8080–8099** unless `--
 
 ```bash
 docker build \
-  --build-arg APP_VERSION=1.1.0 \
+  --build-arg APP_VERSION=1.2.0 \
   --build-arg IMAGE_TAG=local \
   --build-arg GIT_SHA="$(git rev-parse --short HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -198,6 +199,26 @@ For a real incident, use a unique file name:
 esxtop -b -a -d 2 -n 300 \
   | gzip -9c > /vmfs/volumes/SAS.-LOCAL/esxtop-$(hostname)-$(date +%FT%H%M).csv.gz
 ```
+
+### Focused capture with `-c`
+
+When an all-metric capture is too large, prepare a repeatable field layout interactively:
+
+1. Run `esxtop` on the ESXi host.
+2. Switch to the panel: `u` Disk Device, `d` Disk Adapter, `c` CPU, `m` memory, `n` network.
+3. Press `f` to enable/disable fields and `o` to reorder if needed.
+4. Repeat for every panel you want to include or exclude; the configuration file stores all panel layouts.
+5. Press uppercase **`W`**. At the prompt, enter an absolute datastore path such as `/vmfs/volumes/datastore1/esxtop-disk.rc`.
+6. Validate with a short `-n 2` test, then run the real capture.
+
+```text
+esxtop -b -c /vmfs/volumes/datastore1/esxtop-disk.rc -d 5 -n 60 \
+  > /vmfs/volumes/datastore1/esxtop_disk.csv
+```
+
+**Do not add `-a`** to a focused command — Broadcom documents that `-a` overrides the configuration and collects all statistics. `-c` takes an absolute path; `.esxtoprc` is not a guaranteed default name. The exact default varies by ESXi release and is shown in the `W` prompt. Do not keep the only copy under `/tmp` or on an unhealthy datastore.
+
+The app includes a step-by-step **Capture** page and command builder at `#/capture`. A detailed version is also in the [field guide](public/docs/esxtop-field-guide.md#focused-capture-with--c).
 
 Read the [field guide](public/docs/esxtop-field-guide.md) for the world/group model, every important CPU/memory/storage/network counter, the GAVG = DAVG + KAVG rule, practical threshold rationale and troubleshooting playbooks.
 

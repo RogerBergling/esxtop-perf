@@ -771,6 +771,7 @@ export function renderImport(ctx) {
           <div class="hero-actions">
             <button class="btn btn-primary" type="button" data-open-upload>${icon('upload', 16)} Open a capture</button>
             <button class="btn" type="button" data-load-demo>${icon('play', 15)} Load demo capture</button>
+            <a class="btn btn-ghost" href="#/capture">${icon('play', 15)} Capture with -c</a>
             <a class="btn btn-ghost" href="#/guide">${icon('book', 15)} Read the field guide</a>
           </div>
           <div class="hero-trust">
@@ -1418,6 +1419,170 @@ export async function renderSeries(ctx, seriesId) {
         series.values.forEach((value, index) => rows.push([doc.time.rawLabels?.[index] || doc.time.labels?.[index] || index, value, series.metric, series.group, series.instance]));
         csvDownload(`esxtop-${series.metric.replace(/[^\w-]+/g, '_')}-${series.id}.csv`, rows);
       });
+    },
+  };
+}
+
+export function renderCapture(ctx) {
+  const panelKeys = {
+    'disk-both': ['u', 'd'],
+    'disk-device': ['u'],
+    'disk-adapter': ['d'],
+    cpu: ['c'],
+    memory: ['m'],
+    network: ['n'],
+  };
+  const steps = [
+    ['Start esxtop interactively', 'Open an SSH session to the ESXi host as root and run <code>esxtop</code>. Do not add <code>-a</code> here; you are preparing a focused field layout.'],
+    ['Open the panel you need', 'Use <b>u</b> for Disk Device, <b>d</b> for Disk Adapter, <b>c</b> for CPU, <b>m</b> for memory, or <b>n</b> for network. For a disk-focused capture, configure both <b>u</b> and <b>d</b>.'],
+    ['Select fields with f', 'Press <b>f</b> to open the field-selection panel. Enable only the counters you need. Press <b>o</b> if you also want to reorder them. Repeat this in every panel you want to exclude or include; the rc file stores all panel selections.'],
+    ['Write the config with W', 'Press <b>W</b> — uppercase, case-sensitive. At the prompt, enter an <b>absolute datastore path</b> such as /vmfs/volumes/datastore1/esxtop-disk.rc. Do not accept a default path under /tmp or the ESXi ramdisk if the file must survive a reboot.'],
+    ['Verify the file and header', 'Run a tiny batch test with <code>-n 2</code>, then inspect the CSV header. This proves the config is readable and that the expected counters are present before a long capture.'],
+    ['Run the focused capture', 'Use <code>esxtop -b -c &lt;absolute-rc-path&gt; -d &lt;interval&gt; -n &lt;samples&gt;</code>. Do not add <code>-a</code>: it overrides the configuration and collects all statistics.'],
+  ];
+
+  const stepHtml = steps.map(([title, detail], index) => `
+    <article class="step-card">
+      <span class="step-num">${String(index + 1).padStart(2, '0')}</span>
+      <div><h3>${title}</h3><p>${detail}</p></div>
+    </article>`).join('');
+
+  return {
+    html: `
+      <div class="page-head">
+        <div class="eyebrow">Capture manual · focused fields</div>
+        <h1>Make a config file with <span class="mono">-c</span></h1>
+        <p class="page-lede">Interactive esxtop can write a reusable configuration file. Use it when you need a repeatable, smaller capture — for example disk device and disk adapter latency fields — instead of collecting every counter on a busy host.</p>
+        <div class="summary-status-row">${pill('Broadcom documented', 'accent')} ${pill('W is uppercase', 'warn')} ${pill('omit -a', 'danger')}</div>
+      </div>
+
+      <div class="capture-manual-layout">
+        <section class="card">
+          <div class="card-header"><div><div class="card-kicker">Command builder</div><h2>Build the batch command</h2></div>${icon('play', 20)}</div>
+          <p class="muted">The config file must already exist. Build the command here, run it on the ESXi host, then import the resulting CSV or gzip file into ESXtop Lens.</p>
+          <div class="form-grid">
+            <label class="field"><span>Config file path</span><input class="input" id="capture-config" value="/vmfs/volumes/datastore1/esxtop-disk.rc" spellcheck="false"></label>
+            <label class="field"><span>Panel to configure</span><select class="select" id="capture-panel">
+              <option value="disk-both">Disk Device + Disk Adapter</option>
+              <option value="disk-device">Disk Device only</option>
+              <option value="disk-adapter">Disk Adapter only</option>
+              <option value="cpu">CPU</option>
+              <option value="memory">Memory</option>
+              <option value="network">Network</option>
+            </select></label>
+            <label class="field"><span>Interval (seconds)</span><input class="input" id="capture-interval" type="number" value="5" min="2" step="1"></label>
+            <label class="field"><span>Samples (-n)</span><input class="input" id="capture-samples" type="number" value="60" min="1" step="1"></label>
+            <label class="field field-wide"><span>Output file</span><input class="input" id="capture-output" value="/vmfs/volumes/datastore1/esxtop-disk.csv" spellcheck="false"></label>
+            <label class="check-field field-wide"><input id="capture-gzip" type="checkbox"> <span>Compress the output with <code>gzip -9c</code> (recommended for long captures)</span></label>
+          </div>
+          <div class="capture-hint" id="capture-panel-hint">Configure both <b>u</b> (Disk Device) and <b>d</b> (Disk Adapter) before pressing <b>W</b>.</div>
+          <div class="command-preview">
+            <div class="command-toolbar"><span>Batch command</span><button class="btn btn-sm btn-ghost" type="button" id="capture-copy">${icon('download', 13)} Copy</button></div>
+            <pre><code id="capture-command"></code></pre>
+          </div>
+          <div class="capture-warning" id="capture-warning" hidden>${icon('alert', 14)} Prefer an absolute path under <code>/vmfs/volumes/</code>; the ESXi ramdisk and <code>/tmp</code> are not durable storage.</div>
+          <div class="callout danger mt-1"><strong>Do not add <code>-a</code> to this command.</strong> Broadcom documents that <code>-a</code> overrides configuration-file setup and shows all statistics. That defeats the focused capture.</div>
+        </section>
+
+        <aside class="card flat">
+          <div class="card-kicker">Verification recipe</div>
+          <h3>Test before the long run</h3>
+          <p>Use a short two-sample capture and inspect the header before collecting for 5 or 10 minutes:</p>
+          <pre class="mini-code"><code>esxtop -b -c /vmfs/volumes/datastore1/esxtop-disk.rc \
+  -d 2 -n 2 > /vmfs/volumes/datastore1/esxtop-test.csv
+head -1 /vmfs/volumes/datastore1/esxtop-test.csv \
+  | tr ',' '\n' | grep -E 'DAVG|KAVG|GAVG|CMDS|QUED' | head</code></pre>
+          <p class="dim">If expected counters are missing, the rc file is not selecting the panel fields you think it is. Re-check <code>f</code> and press <code>W</code> again.</p>
+          <div class="capture-hint">The exact default configuration filename varies by ESXi release. Do not rely on <code>.esxtoprc</code>; use the <b>W</b> prompt and an explicit absolute path.</div>
+        </aside>
+      </div>
+
+      <div class="section-head"><div><div class="eyebrow">Step by step</div><h2>The exact workflow</h2></div><p>The sequence matters: configure interactively, save with <code>W</code>, then reference that file with <code>-c</code> in batch mode.</p></div>
+      <div class="steps-grid">${stepHtml}</div>
+
+      <div class="section-head"><div><div class="eyebrow">Reference</div><h2>Options and traps</h2></div></div>
+      <div class="grid-2">
+        <div class="card flat">
+          <h3>What each option means</h3>
+          <table class="data compact-table"><tbody>
+            <tr><td class="mono">esxtop</td><td>starts the ESXi performance utility</td></tr>
+            <tr><td class="mono">-b</td><td>batch mode: CSV to stdout, entity list locked at first sample</td></tr>
+            <tr><td class="mono">-c file</td><td>load a user-defined config; without it, the release default is used</td></tr>
+            <tr><td class="mono">-d 5</td><td>5 seconds between snapshots; minimum is 2 seconds</td></tr>
+            <tr><td class="mono">-n 60</td><td>about 60 samples; nominal coverage is n × delay</td></tr>
+            <tr><td class="mono">W</td><td>write the current interactive setup, including field selections</td></tr>
+            <tr><td class="mono">-a</td><td>all statistics; overrides the config file — omit it for focused capture</td></tr>
+          </tbody></table>
+        </div>
+        <div class="card flat">
+          <h3>Common mistakes</h3>
+          <ul class="mistake-list">
+            <li><b>Using lowercase <code>w</code>:</b> the config write command is uppercase <code>W</code>.</li>
+            <li><b>Keeping <code>-a</code>:</b> the config file is ignored. Remove it.</li>
+            <li><b>Saving under <code>/tmp</code>:</b> ESXi's ramdisk is not durable. Use a datastore path.</li>
+            <li><b>Assuming <code>.esxtoprc</code>:</b> the default name is release-dependent; press <code>W</code> and read the prompt, or provide an absolute path.</li>
+            <li><b>Using a relative <code>-c</code> path:</b> <code>.esxtoprc</code> only works from the directory that contains it. Prefer an absolute datastore path.</li>
+            <li><b>Configuring only one panel:</b> the rc file stores all panel layouts. Clear fields in panels you do not want, then recheck the output header.</li>
+            <li><b>Writing to the datastore under investigation:</b> choose another datastore if possible.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout accent"><strong>Import it:</strong> the resulting file can be plain CSV or gzip. ESXtop Lens detects gzip from its magic bytes, not the filename. Open <a href="#/import">Import</a> and drop the file in. If the capture is intended for disk troubleshooting, this focused profile can be much smaller and easier to review than an <code>-a</code> capture.</div>
+
+      <div class="section-head"><div><div class="eyebrow">Primary sources</div><h2>Verify against the vendor</h2></div></div>
+      <div class="card flat">
+        <ul class="source-list">
+          <li><span class="src-num">01</span><a href="https://techdocs.broadcom.com/us/en/vmware-cis/vsphere/vsphere/8-0/vsphere-monitoring-and-performance/performance-monitoring-utilities-resxtop-and-esxtop/using-esxtop-or-resxtop-in-interactive-mode/interactive-mode-command-line-options.html" target="_blank" rel="noreferrer">Broadcom — interactive options, W and -c ${icon('external', 12)}</a></li>
+          <li><span class="src-num">02</span><a href="https://techdocs.broadcom.com/us/en/vmware-cis/vsphere/vsphere/8-0/vsphere-monitoring-and-performance/performance-monitoring-utilities-resxtop-and-esxtop/using-batch-mode/prepare-for-batch-mode.html" target="_blank" rel="noreferrer">Broadcom — prepare for batch mode ${icon('external', 12)}</a></li>
+          <li><span class="src-num">03</span><a href="https://knowledge.broadcom.com/external/article/370279/collecting-esxtop-batch-data-for-esxi-pe.html" target="_blank" rel="noreferrer">Broadcom 370279 — collecting esxtop batch data ${icon('external', 12)}</a></li>
+          <li><span class="src-num">04</span><a href="https://www.virten.net/vmware/esxtop/" target="_blank" rel="noreferrer">virten.net — ESXTOP guide ${icon('external', 12)}</a></li>
+          <li><span class="src-num">05</span><a href="https://www.yellow-bricks.com/esxtop/" target="_blank" rel="noreferrer">Yellow Bricks — save a focused configuration with W ${icon('external', 12)}</a></li>
+        </ul>
+      </div>
+    `,
+    mount(root) {
+      const config = root.querySelector('#capture-config');
+      const panel = root.querySelector('#capture-panel');
+      const interval = root.querySelector('#capture-interval');
+      const samples = root.querySelector('#capture-samples');
+      const output = root.querySelector('#capture-output');
+      const gzip = root.querySelector('#capture-gzip');
+      const command = root.querySelector('#capture-command');
+      const hint = root.querySelector('#capture-panel-hint');
+      const warning = root.querySelector('#capture-warning');
+      const shellQuote = (value) => /^[\w./:@%+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+      const panelLabels = {
+        'disk-both': 'Configure both <b>u</b> (Disk Device) and <b>d</b> (Disk Adapter) before pressing <b>W</b>.',
+        'disk-device': 'Press <b>u</b> (Disk Device), then configure its fields with <b>f</b>.',
+        'disk-adapter': 'Press <b>d</b> (Disk Adapter), then configure its fields with <b>f</b>.',
+        cpu: 'Press <b>c</b> (CPU), then configure its fields with <b>f</b>.',
+        memory: 'Press <b>m</b> (Memory), then configure its fields with <b>f</b>.',
+        network: 'Press <b>n</b> (Network), then configure its fields with <b>f</b>.',
+      };
+      const update = () => {
+        const configPath = config.value.trim() || '/vmfs/volumes/datastore1/esxtop-disk.rc';
+        const outputPath = output.value.trim() || '/vmfs/volumes/datastore1/esxtop-disk.csv';
+        const intervalValue = Math.max(2, Number(interval.value) || 5);
+        const samplesValue = Math.max(1, Number(samples.value) || 60);
+        const finalOutput = gzip.checked && !outputPath.endsWith('.gz') ? `${outputPath}.gz` : outputPath;
+        command.textContent = `esxtop -b -c ${shellQuote(configPath)} -d ${intervalValue} -n ${samplesValue}${gzip.checked ? ' | gzip -9c' : ''} > ${shellQuote(finalOutput)}`;
+        hint.innerHTML = panelLabels[panel.value] || panelLabels['disk-both'];
+        warning.hidden = outputPath.startsWith('/vmfs/volumes/');
+      };
+      [config, panel, interval, samples, output, gzip].forEach((element) => {
+        element.addEventListener('input', update);
+        element.addEventListener('change', update);
+      });
+      root.querySelector('#capture-copy').addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(command.textContent);
+          ctx.toast('Batch command copied.');
+        } catch {
+          ctx.toast('Copy failed; select the command manually.');
+        }
+      });
+      update();
     },
   };
 }

@@ -62,6 +62,33 @@ The application defaults to 12,000,000 data cells, 120,000 metric columns and 50
 
 Sample arrays are not sent to the browser with the first response. The parser stores them in a short-lived SQLite session; charts request only the series they display. This keeps the initial payload and browser memory small. Sessions expire after 30 minutes by default (`ESXTOP_SESSION_TTL_MINUTES`) and are deleted at shutdown.
 
+### Focused capture with `-c`
+
+The full command with `-a` is the broad first look. When you need a smaller, repeatable capture — for example disk device and adapter latency only — prepare a configuration file interactively.
+
+1. Start `esxtop` on the ESXi host.
+2. Switch to the panel: `c` CPU, `m` memory, `u` Disk Device, `d` Disk Adapter, `n` network, or `v` VM disk.
+3. Press `f` to add/remove fields. Press `o` to change order if needed.
+4. Repeat the field selection for every panel you want to include or exclude. The configuration file contains all panel layouts.
+5. Press uppercase **`W`**. At the prompt, enter an **absolute datastore path**, for example `/vmfs/volumes/datastore1/esxtop-disk.rc`.
+6. Verify the config with a two-sample batch run, then collect the real window.
+
+```text
+esxtop -b -c /vmfs/volumes/datastore1/esxtop-disk.rc -d 5 -n 60   > /vmfs/volumes/datastore1/esxtop_disk.csv
+```
+
+Important details:
+
+- **Do not add `-a`** to the focused command. Broadcom documents that `-a` overrides configuration-file setup and shows all statistics.
+- `-c` accepts an absolute path. A relative name such as `.esxtoprc` only works from the directory that contains that file.
+- The exact default configuration filename depends on the ESXi release. Broadcom's current interactive documentation still refers to `~/.esxtop50rc`; older releases use other names. Do **not** assume `.esxtoprc`. Read the `W` prompt, or always supply your own path.
+- `W` is uppercase and case-sensitive.
+- Do not save the only copy under `/tmp`; on ESXi that is a ramdisk. Use a datastore path, preferably a different datastore from the one being investigated.
+- The rc file stores selections, not a magic filter. If you leave default fields enabled in other panels, they may still appear. Inspect the first CSV line and remove fields you do not want.
+- Some release-specific counters may be absent from batch output. Validate the header with `-n 2` before starting a long capture.
+
+There is a step-by-step capture builder and command preview at **Capture** in the application, or use `#/capture`.
+
 ## 3. What the CSV actually contains
 
 The first line begins with a PDH marker such as:

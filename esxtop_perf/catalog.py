@@ -15,8 +15,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-APP_VERSION = "1.1.0"
-PARSER_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
+PARSER_VERSION = "1.2.0"
 
 REFERENCES: dict[str, dict[str, str]] = {
     "esxtop_metrics": {
