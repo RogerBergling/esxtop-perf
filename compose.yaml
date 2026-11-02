@@ -30,13 +30,19 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
       - "com.centurylinklabs.watchtower.scope=esxtop"
 
+  # Automatically update the app every 5 minutes. Watchtower mounts the
+  # Docker socket, which is host-level privilege. Remove this service if you
+  # do not want automatic updates.
   watchtower:
-    image: nickfedor/watchtower:1.23.2
-    container_name: watchtower-esxtop
-    profiles: ["auto-update"]
+    image: containrrr/watchtower
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      # Uncomment only for a private GHCR image, after `docker login ghcr.io`:
-      # - ${HOME}/.docker/config.json:/config.json:ro
-    command: --interval 3600 --label-enable --scope esxtop --cleanup
+      # Run `docker login ghcr.io` once to create this file, or remove the
+      # line when using the public image without authenticated pulls.
+      - ${HOME}/.docker/config.json:/config.json:ro
+    environment:
+      - DOCKER_API_VERSION=1.44
+    labels:
+      - "com.centurylinklabs.watchtower.scope=esxtop"
+    command: --interval 300 --label-enable --scope esxtop --cleanup

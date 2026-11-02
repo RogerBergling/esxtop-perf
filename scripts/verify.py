@@ -111,7 +111,10 @@ def main() -> int:
     compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
     check("ghcr.io/rogerbergling/esxtop-perf:latest" in compose, "compose does not use the GHCR image")
     check("com.centurylinklabs.watchtower.enable=true" in compose, "compose is missing Watchtower enable label")
-    check("profiles: [\"auto-update\"]" in compose, "Watchtower must be opt-in")
+    check("containrrr/watchtower" in compose, "compose must use the containrrr Watchtower image")
+    check("DOCKER_API_VERSION=1.44" in compose, "Watchtower must pin DOCKER_API_VERSION=1.44")
+    check("--interval 300" in compose, "Watchtower must check every 300 seconds")
+    check("com.centurylinklabs.watchtower.scope=esxtop" in compose, "Watchtower scope must be esxtop")
 
     workflow = (ROOT / ".github/workflows/docker-publish.yml").read_text(encoding="utf-8")
     check("packages: write" in workflow, "publish workflow lacks packages permission")

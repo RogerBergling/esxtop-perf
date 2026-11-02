@@ -31,7 +31,7 @@ Both screenshots use the bundled synthetic demo capture. The demo contains inten
 - **Written field guide** — the capture command explained token by token, CSV anatomy, counter semantics, playbooks and caveats.
 - **Focused capture manual** — a step-by-step `-c` workflow with a command builder, verification recipe and the traps that make a configuration silently ineffective.
 - **Local-only processing** — captures are parsed into a short-lived local session. No analytics, no third-party upload; the session is removed after 30 minutes or on restart.
-- **Docker + GHCR + Watchtower** — multi-arch image publishing and opt-in automatic updates, following the same delivery pattern as [Learning](https://github.com/RogerBergling/Learning).
+- **Docker + GHCR + Watchtower** — multi-arch image publishing and automatic updates every 5 minutes, scoped to this container.
 
 ## Quick start
 
@@ -60,13 +60,15 @@ docker compose up -d --force-recreate
 curl -s http://localhost:8004/version.json | python3 -m json.tool
 ```
 
-Enable Watchtower (opt-in profile):
+Watchtower is included and starts with the stack:
 
 ```bash
-docker compose --profile auto-update up -d
+docker compose up -d
 ```
 
-Watchtower mounts `/var/run/docker.sock`, which is host-level privilege. It is deliberately not started by default. The compose labels scope it to the `esxtop` service only.
+It checks every **5 minutes** and updates only the `esxtop` container through the Watchtower scope label. It mounts `/var/run/docker.sock`, which is host-level privilege, so remove the `watchtower` service from `compose.yaml` if you do not want automatic updates.
+
+The Watchtower service also mounts `${HOME}/.docker/config.json` for registry authentication. Run `docker login ghcr.io` once to create that file, or remove the volume line when using the public image without authenticated pulls.
 
 ### Local Python
 
