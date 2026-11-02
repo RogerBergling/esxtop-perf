@@ -1,0 +1,13 @@
+# esxtop-perf
+
+Analyzing esxtop csv files and get detailed information
+
+## Getting started
+
+Describe how to install, configure, and run this project here.
+
+## Repository notes
+
+- The default branch is `main`.
+- Local secrets belong in `.env`; only `.env.example` should be committed.
+- Run `git-create` in this directory to verify the repository before pushing.
