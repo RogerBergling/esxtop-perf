@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Parser, static checks and HTTP smoke test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile Python
+        run: python3 -m compileall -q esxtop_perf start.py scripts tests
+
+      - name: Validate project structure and links
+        run: python3 scripts/verify.py
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: HTTP smoke test
+        run: python3 scripts/smoke.py
+
+  javascript:
+    name: JavaScript and Markdown syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Check every browser module
+        run: find public/assets/js -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Validate Markdown guide is present
+        run: test -s public/docs/esxtop-field-guide.md
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [python, javascript]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build without pushing
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: false
+          build-args: |
+            APP_VERSION=1.1.0
+            IMAGE_TAG=ci
+            GIT_SHA=${{ github.sha }}
+            BUILD_DATE=ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

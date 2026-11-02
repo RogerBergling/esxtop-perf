@@ -1,0 +1,372 @@
+/* ESXtop Lens application shell, hash router and upload lifecycle. */
+
+import {
+  renderCategory,
+  renderGuide,
+  renderImport,
+  renderInsights,
+  renderMetric,
+  renderMetrics,
+  renderNotFound,
+  renderOverview,
+  renderSeries,
+  renderVm,
+  renderVms,
+  captureLine,
+} from './pages.js';
+
+const THEME_KEY = 'esxtop-lens-theme';
+const state = {
+  doc: null,
+  error: null,
+  health: null,
+  seriesById: new Map(),
+  seriesCache: new Map(),
+};
+
+const view = document.querySelector('#view');
+const captureBar = document.querySelector('#capture-bar');
+const nav = document.querySelector('#main-nav');
+const loading = document.querySelector('#loading-overlay');
+const loadingTitle = document.querySelector('#loading-title');
+const loadingDetail = document.querySelector('#loading-detail');
+const loadingProgress = document.querySelector('#loading-progress');
+const loadingMeta = document.querySelector('#loading-meta');
+const toastElement = document.querySelector('#toast');
+const newCapture = document.querySelector('#new-capture');
+const globalFileInput = document.querySelector('#global-file-input');
+
+let renderSequence = 0;
+let toastTimer = null;
+let parseTimer = null;
+
+const NAV_ITEMS = [
+  ['overview', 'Overview', '#/'],
+  ['cpu', 'CPU', '#/cpu'],
+  ['memory', 'Memory', '#/memory'],
+  ['storage', 'Storage', '#/storage'],
+  ['network', 'Network', '#/network'],
+  ['vms', 'VMs', '#/vms'],
+  ['insights', 'Insights', '#/insights'],
+  ['metrics', 'Metrics', '#/metrics'],
+  ['guide', 'Guide', '#/guide'],
+];
+
+function initialTheme() {
+  const saved = localStorage.getItem(THEME_KEY);
+  if (saved === 'dark' || saved === 'light') return saved;
+  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem(THEME_KEY, theme);
+}
+
+function toggleTheme() {
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+}
+
+function toast(message) {
+  clearTimeout(toastTimer);
+  toastElement.textContent = message;
+  toastElement.classList.add('show');
+  toastTimer = setTimeout(() => toastElement.classList.remove('show'), 3200);
+}
+
+function escapeRoute(value) {
+  return encodeURIComponent(value);
+}
+
+function parseHash() {
+  const raw = (window.location.hash || '#/').replace(/^#/, '') || '/';
+  const [pathPart, queryPart = ''] = raw.split('?');
+  const path = pathPart || '/';
+  const segments = path.split('/').filter(Boolean).map((segment) => decodeURIComponent(segment));
+  const query = Object.fromEntries(new URLSearchParams(queryPart));
+  return { path, segments, query };
+}
+
+function activeNav(route) {
+  const first = route.segments[0] || 'overview';
+  if (first === 'vm') return 'vms';
+  if (first === 'metric' || first === 'series') return 'metrics';
+  return first;
+}
+
+function updateChrome(route) {
+  if (!nav) return;
+  if (state.doc) {
+    nav.innerHTML = NAV_ITEMS.map(([key, label, href]) => `<a href="${href}" data-nav="${key}">${label}</a>`).join('');
+  } else {
+    nav.innerHTML = `<a href="#/import" data-nav="import">Import</a><a href="#/guide" data-nav="guide">Field guide</a>`;
+  }
+  const active = activeNav(route);
+  nav.querySelectorAll('a').forEach((link) => {
+    const key = link.dataset.nav;
+    const isActive = key === active || (key === 'vms' && active === 'vms') || (key === 'overview' && active === 'overview');
+    link.classList.toggle('active', isActive);
+  });
+  const showBar = Boolean(state.doc) && !['import', 'guide'].includes(route.segments[0] || '');
+  captureBar.hidden = !showBar;
+  if (showBar) captureBar.innerHTML = captureLine(state.doc);
+  newCapture.hidden = !state.doc;
+  if (state.doc) {
+    const title = {
+      overview: 'Overview', cpu: 'CPU', memory: 'Memory', storage: 'Storage', network: 'Network',
+      vms: 'Virtual machines', insights: 'Findings', metrics: 'Metric explorer', vm: 'VM detail',
+      metric: 'Metric detail', series: 'Signal detail',
+    }[active] || 'Capture';
+    document.title = `${title} · ${state.doc.meta.host || 'ESXi'} · ESXtop Lens`;
+  } else {
+    document.title = route.segments[0] === 'guide'
+      ? 'Field guide · ESXtop Lens'
+      : 'ESXtop Lens — turn an esxtop capture into a diagnosis';
+  }
+}
+
+function showLoading(title, detail, progress = 5, meta = '') {
+  loading.hidden = false;
+  document.body.setAttribute('aria-busy', 'true');
+  loadingTitle.textContent = title;
+  loadingDetail.textContent = detail;
+  loadingProgress.style.width = `${Math.max(2, Math.min(100, progress))}%`;
+  loadingMeta.textContent = meta;
+}
+
+function setLoading(title, detail, progress, meta) {
+  if (title) loadingTitle.textContent = title;
+  if (detail) loadingDetail.textContent = detail;
+  if (Number.isFinite(progress)) loadingProgress.style.width = `${Math.max(2, Math.min(100, progress))}%`;
+  if (meta !== undefined) loadingMeta.textContent = meta;
+}
+
+function hideLoading() {
+  loading.hidden = true;
+  document.body.removeAttribute('aria-busy');
+  clearInterval(parseTimer);
+  parseTimer = null;
+}
+
+function parseProgress() {
+  clearInterval(parseTimer);
+  let progress = 48;
+  parseTimer = setInterval(() => {
+    progress = Math.min(92, progress + (progress < 70 ? 3 : 1));
+    loadingProgress.style.width = `${progress}%`;
+  }, 380);
+}
+
+function installDocument(document) {
+  state.doc = document;
+  state.error = null;
+  state.seriesById = new Map((document.series || []).map((series) => [series.id, series]));
+  state.seriesCache = new Map();
+}
+
+async function ensureSeries(ids) {
+  const unique = [...new Set((ids || []).filter(Boolean))];
+  const missing = unique.filter((id) => !state.seriesCache.has(id));
+  if (!missing.length) return;
+  if (!state.doc) throw new Error('No capture is loaded.');
+  const session = state.doc.meta?.sessionId;
+  if (!session) {
+    throw new Error('This capture has no analysis session. Re-import the capture.');
+  }
+  const response = await fetch('/api/series', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, ids: missing }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `Series request failed with HTTP ${response.status}.`);
+  }
+  for (const [id, values] of Object.entries(payload.series || {})) {
+    state.seriesCache.set(id, values);
+    const series = state.seriesById.get(id);
+    if (series) series.values = values;
+  }
+  for (const id of missing) {
+    if (!state.seriesCache.has(id)) state.seriesCache.set(id, []);
+  }
+}
+
+function uploadFile(file) {
+  if (!file) return;
+  if (state.health?.maxUploadBytes && file.size > state.health.maxUploadBytes) {
+    state.error = `The file is ${(file.size / 1024 / 1024).toFixed(1)} MB, larger than the server limit of ${(state.health.maxUploadBytes / 1024 / 1024).toFixed(0)} MB.`;
+    window.location.hash = '#/import';
+    render();
+    return;
+  }
+  showLoading('Reading capture…', 'Uploading the file to the local parser.', 2, `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} MB`);
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', `/api/analyze?name=${escapeRoute(file.name)}`);
+  xhr.responseType = 'json';
+  xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+  xhr.upload.addEventListener('loadstart', () => {
+    setLoading('Uploading capture…', 'Sending the capture to the local parser.', 3, `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} MB`);
+  });
+  xhr.upload.addEventListener('progress', (event) => {
+    if (!event.lengthComputable) return;
+    const percent = 5 + Math.round((event.loaded / event.total) * 38);
+    loadingProgress.style.width = `${percent}%`;
+    loadingMeta.textContent = `Upload ${Math.round((event.loaded / event.total) * 100)}% · ${file.name}`;
+  });
+  xhr.upload.addEventListener('load', () => {
+    setLoading('Parsing and scoring…', 'Reading PDH-CSV columns, computing statistics and applying guardrails.', 50, `${file.name} · local processing`);
+    parseProgress();
+  });
+  xhr.addEventListener('load', () => {
+    hideLoading();
+    const document = xhr.response;
+    if (xhr.status >= 200 && xhr.status < 300 && document?.ok) {
+      installDocument(document);
+      if (!window.location.hash || ['#/', '#/import', '#/guide'].includes(window.location.hash)) {
+        window.location.hash = '#/';
+      }
+      toast(`${document.meta.host || 'Capture'} loaded · ${document.meta.sampleCount} samples · ${document.meta.columns.toLocaleString()} signals`);
+      render();
+      return;
+    }
+    const message = document?.error || `The server returned HTTP ${xhr.status}.`;
+    state.error = message;
+    window.location.hash = '#/import';
+    render();
+    toast('Capture could not be loaded.');
+  });
+  xhr.addEventListener('error', () => {
+    hideLoading();
+    state.error = 'Could not reach the local analysis server. Is the container or start.py still running?';
+    window.location.hash = '#/import';
+    render();
+  });
+  xhr.addEventListener('abort', () => {
+    hideLoading();
+    toast('Upload cancelled.');
+  });
+  xhr.send(file);
+}
+
+async function loadDemo() {
+  showLoading('Loading demo capture…', 'Fetching the bundled synthetic esxtop capture and running analysis.', 18, 'esxi01 · 60 samples · 936 signals');
+  parseProgress();
+  try {
+    const response = await fetch('/api/demo', { cache: 'no-store' });
+    const document = await response.json().catch(() => null);
+    hideLoading();
+    if (!response.ok || !document?.ok) throw new Error(document?.error || `HTTP ${response.status}`);
+    installDocument(document);
+    window.location.hash = '#/';
+    toast('Demo capture loaded. Every finding is synthetic.');
+    render();
+  } catch (error) {
+    hideLoading();
+    state.error = `Could not load the demo: ${error.message}`;
+    window.location.hash = '#/import';
+    render();
+  }
+}
+
+function pageFor(route) {
+  if (route.segments[0] === 'guide') return renderGuide;
+  if (!state.doc) return renderImport;
+  const first = route.segments[0] || 'overview';
+  if (first === 'overview' || route.segments.length === 0) return renderOverview;
+  if (first === 'import') return renderImport;
+  if (['cpu', 'memory', 'storage', 'network', 'power', 'other'].includes(first)) {
+    return (context) => renderCategory(context, first);
+  }
+  if (first === 'vms') return renderVms;
+  if (first === 'vm') return (context) => renderVm(context, route.segments.slice(1).join('/'));
+  if (first === 'insights') return renderInsights;
+  if (first === 'metrics') return (context) => renderMetrics(context, route.query);
+  if (first === 'metric') return (context) => renderMetric(context, route.segments.slice(1).join('/'));
+  if (first === 'series') return (context) => renderSeries(context, route.segments.slice(1).join('/'));
+  return renderNotFound;
+}
+
+async function render() {
+  const sequence = ++renderSequence;
+  const route = parseHash();
+  updateChrome(route);
+  const page = state.doc
+    ? pageFor(route)
+    : (route.segments[0] === 'guide' ? renderGuide : renderImport);
+  const context = {
+    state,
+    doc: state.doc,
+    route,
+    query: route.query,
+    uploadFile,
+    loadDemo,
+    ensureSeries,
+    toast,
+    navigate: (hash) => { window.location.hash = hash; },
+    render,
+  };
+  try {
+    const result = await page(context);
+    if (sequence !== renderSequence) return;
+    view.innerHTML = result.html;
+    view.dataset.route = route.path;
+    await result.mount?.(view, context);
+    if (sequence !== renderSequence) return;
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  } catch (error) {
+    console.error(error);
+    if (sequence !== renderSequence) return;
+    view.innerHTML = `<div class="page-head"><div class="eyebrow">Application error</div><h1>Something went wrong</h1><p class="page-lede">${escapeHtml(error.message || String(error))}</p></div><div class="summary-actions"><a class="btn btn-primary" href="#/import">Back to import</a><button class="btn" type="button" id="reload-app">Reload</button></div>`;
+    view.querySelector('#reload-app')?.addEventListener('click', () => window.location.reload());
+  }
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+}
+
+async function loadMetadata() {
+  try {
+    const response = await fetch('/version.json', { cache: 'no-store' });
+    if (!response.ok) return;
+    const version = await response.json();
+    document.querySelectorAll('[data-app-version]').forEach((element) => { element.textContent = version.version || 'dev'; });
+    document.querySelectorAll('[data-image-tag]').forEach((element) => { element.textContent = version.imageTag || 'local'; });
+    document.querySelectorAll('[data-commit]').forEach((element) => { element.textContent = String(version.commit || 'local').slice(0, 12); });
+    document.querySelectorAll('[data-build-date]').forEach((element) => { element.textContent = version.buildDate || 'local build'; });
+  } catch {
+    // Local first, metadata optional.
+  }
+  try {
+    const health = await fetch('/api/health', { cache: 'no-store' }).then((response) => response.json());
+    state.health = health;
+  } catch {
+    // The app remains usable without the health endpoint.
+  }
+}
+
+function init() {
+  applyTheme(initialTheme());
+  document.querySelector('#theme-toggle')?.addEventListener('click', toggleTheme);
+  newCapture?.addEventListener('click', () => globalFileInput?.click());
+  globalFileInput?.addEventListener('change', () => {
+    const file = globalFileInput.files?.[0];
+    if (file) uploadFile(file);
+    globalFileInput.value = '';
+  });
+  window.addEventListener('hashchange', render);
+  window.addEventListener('keydown', (event) => {
+    if (event.key === '/' && !/input|textarea|select/i.test(document.activeElement?.tagName || '')) {
+      const search = document.querySelector('#metric-search, #vm-search');
+      if (search) {
+        event.preventDefault();
+        search.focus();
+      }
+    }
+  });
+  loadMetadata();
+  render();
+}
+
+init();

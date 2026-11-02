@@ -1,0 +1,42 @@
+name: esxtop-lens
+
+services:
+  esxtop-lens:
+    image: ghcr.io/rogerbergling/esxtop-perf:latest
+    container_name: esxtop-lens
+    mem_limit: 2g
+    mem_reservation: 256m
+    memswap_limit: 2g           # same as mem_limit = no swap
+    ports:
+      - "8004:8080"
+    restart: unless-stopped
+    pull_policy: always
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=2g
+    environment:
+      ESXTOP_MAX_UPLOAD_MB: "${ESXTOP_MAX_UPLOAD_MB:-512}"
+      ESXTOP_MAX_DECOMPRESSED_MB: "${ESXTOP_MAX_DECOMPRESSED_MB:-1536}"
+      ESXTOP_MAX_CELLS: "${ESXTOP_MAX_CELLS:-12000000}"
+      ESXTOP_MAX_SERIES: "${ESXTOP_MAX_SERIES:-120000}"
+      ESXTOP_MAX_ROWS: "${ESXTOP_MAX_ROWS:-50000}"
+      ESXTOP_SESSION_TTL_MINUTES: "${ESXTOP_SESSION_TTL_MINUTES:-30}"
+      ESXTOP_MAX_SESSIONS: "${ESXTOP_MAX_SESSIONS:-4}"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=esxtop"
+
+  watchtower:
+    image: nickfedor/watchtower:1.23.2
+    container_name: watchtower-esxtop
+    profiles: ["auto-update"]
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Uncomment only for a private GHCR image, after `docker login ghcr.io`:
+      # - ${HOME}/.docker/config.json:/config.json:ro
+    command: --interval 3600 --label-enable --scope esxtop --cleanup

@@ -1,0 +1,367 @@
+"""HTTP server for ESXtop Lens.
+
+The application is deliberately dependency-free: Python's standard library
+serves the SPA and parses uploads; the browser does the visualisation. Captures
+are processed in temporary files. A short-lived SQLite session stores series
+values for lazy chart loading and is removed after the session TTL or at exit.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import gzip
+import http.server
+import json
+import signal
+import socket
+import sys
+import tempfile
+import threading
+import time
+import traceback
+import urllib.parse
+import webbrowser
+from pathlib import Path
+
+from . import config
+from .analysis import build_analysis
+from .catalog import APP_VERSION, PARSER_VERSION
+from .parser import CaptureError, parse_capture
+from .sessions import SessionError, SessionStore
+
+ROOT = Path(__file__).resolve().parent.parent
+WEB_ROOT = ROOT / "public"
+WEB_ROOT_REAL = WEB_ROOT.resolve()
+DEMO_FILE = WEB_ROOT / "demo" / "esxtop-demo.csv"
+PORT_RANGE = range(8080, 8100)
+NO_CACHE = "no-store, no-cache, must-revalidate, max-age=0"
+
+SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "font-src 'self'; "
+        "connect-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'none'; "
+        "frame-ancestors 'none'; "
+        "form-action 'self'"
+    ),
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    "X-Frame-Options": "DENY",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
+}
+
+SESSIONS = SessionStore()
+
+
+def _json_bytes(document: dict) -> bytes:
+    return json.dumps(document, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+
+
+def _analyze_file(path: str, filename: str) -> dict:
+    parsed = build_analysis(parse_capture(path, filename))
+    document = {**parsed, "ok": True, "appVersion": APP_VERSION, "parserVersion": PARSER_VERSION}
+    session_id = SESSIONS.create(document)
+    document["meta"]["sessionId"] = session_id
+    return document
+
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    """Static app shell plus the small analysis API."""
+
+    extensions_map = {
+        **http.server.SimpleHTTPRequestHandler.extensions_map,
+        ".md": "text/markdown; charset=utf-8",
+        ".js": "text/javascript; charset=utf-8",
+        ".mjs": "text/javascript; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
+        ".html": "text/html; charset=utf-8",
+        ".json": "application/json; charset=utf-8",
+        ".svg": "image/svg+xml",
+        ".xml": "application/xml; charset=utf-8",
+        ".txt": "text/plain; charset=utf-8",
+        ".csv": "text/csv; charset=utf-8",
+        ".gz": "application/gzip",
+    }
+    server_version = "ESXtopLens/" + APP_VERSION
+    sys_version = ""
+    protocol_version = "HTTP/1.1"
+
+    def end_headers(self) -> None:
+        self.send_header("Cache-Control", NO_CACHE)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        for name, value in SECURITY_HEADERS.items():
+            self.send_header(name, value)
+        super().end_headers()
+
+    def list_directory(self, path):  # noqa: N802
+        self.send_error(404, "Not found")
+        return None
+
+    def translate_path(self, path: str) -> str:  # noqa: N802
+        translated = super().translate_path(path)
+        resolved = Path(translated).resolve()
+        if resolved != WEB_ROOT_REAL and WEB_ROOT_REAL not in resolved.parents:
+            return str(WEB_ROOT_REAL / "__not_found__")
+        return translated
+
+    def do_GET(self) -> None:  # noqa: N802
+        path = urllib.parse.urlparse(self.path).path
+        if path == "/api/health":
+            self._send_json(
+                {
+                    "status": "ok",
+                    "appVersion": APP_VERSION,
+                    "parserVersion": PARSER_VERSION,
+                    "limits": config.public_limits(),
+                    "sessions": SESSIONS.stats(),
+                    "demo": DEMO_FILE.exists(),
+                }
+            )
+            return
+        if path == "/api/demo":
+            try:
+                if not DEMO_FILE.exists():
+                    raise CaptureError("The bundled demo capture is missing.", status=404)
+                document = _analyze_file(str(DEMO_FILE), DEMO_FILE.name)
+                document["meta"]["demo"] = True
+                payload = _json_bytes(document)
+                self._send_bytes(payload, "application/json; charset=utf-8", compress=True)
+            except CaptureError as exc:
+                self._send_json({"ok": False, "error": exc.message}, status=exc.status)
+            except Exception:
+                traceback.print_exc()
+                self._send_json({"ok": False, "error": "Could not load the demo capture."}, status=500)
+            return
+        if path.startswith("/api/"):
+            self._send_json({"ok": False, "error": "Not found."}, status=404)
+            return
+        super().do_GET()
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        path = urllib.parse.urlparse(self.path).path
+        if path.startswith("/api/"):
+            self.send_response(200 if path in {"/api/health", "/api/demo"} else 404)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        super().do_HEAD()
+
+    def do_POST(self) -> None:  # noqa: N802
+        path = urllib.parse.urlparse(self.path).path
+        if path not in {"/api/analyze", "/api/series"}:
+            self.close_connection = True
+            self._send_json({"ok": False, "error": "Not found."}, status=404)
+            return
+        if not self._origin_ok():
+            return
+        if path == "/api/series":
+            self._handle_series()
+            return
+        self._handle_analyze()
+
+    def _origin_ok(self) -> bool:
+        origin = self.headers.get("Origin")
+        if origin:
+            origin_host = urllib.parse.urlparse(origin).netloc
+            if origin_host and origin_host != self.headers.get("Host"):
+                self.close_connection = True
+                self._send_json({"ok": False, "error": "Cross-origin requests are not allowed."}, status=403)
+                return False
+        return True
+
+    def _content_length(self, maximum: int | None = None) -> int | None:
+        length_header = self.headers.get("Content-Length")
+        if length_header is None:
+            self.close_connection = True
+            self._send_json({"ok": False, "error": "Content-Length is required."}, status=411)
+            return None
+        try:
+            length = int(length_header)
+        except ValueError:
+            self.close_connection = True
+            self._send_json({"ok": False, "error": "Invalid Content-Length."}, status=400)
+            return None
+        if length <= 0:
+            self._send_json({"ok": False, "error": "The request body is empty."}, status=400)
+            return None
+        if maximum is not None and length > maximum:
+            self.close_connection = True
+            self._send_json(
+                {"ok": False, "error": f"The request body is larger than the {maximum // 1024} KB limit."},
+                status=413,
+            )
+            return None
+        return length
+
+    def _handle_series(self) -> None:
+        length = self._content_length(min(1024 * 1024, config.max_upload_bytes()))
+        if length is None:
+            return
+        try:
+            body = self.rfile.read(length)
+            payload = json.loads(body.decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("The request body must be a JSON object.")
+            session_id = payload.get("session")
+            series_ids = payload.get("ids")
+            values = SESSIONS.get_values(session_id, series_ids)
+            self._send_json({"ok": True, "session": session_id, "series": values})
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            self._send_json({"ok": False, "error": f"Invalid series request: {exc}"}, status=400)
+        except SessionError as exc:
+            self._send_json({"ok": False, "error": exc.message}, status=exc.status)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception:
+            traceback.print_exc()
+            self._send_json({"ok": False, "error": "The requested series could not be loaded."}, status=500)
+
+    def _handle_analyze(self) -> None:
+        limit = config.max_upload_bytes()
+        length = self._content_length(limit)
+        if length is None:
+            return
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        filename = query.get("name", ["esxtop-capture.csv"])[0]
+        filename = Path(filename).name[:160] or "esxtop-capture.csv"
+
+        started = time.monotonic()
+        temporary_path: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(prefix="esxtop-", suffix=".upload", delete=False) as temporary:
+                temporary_path = temporary.name
+                remaining = length
+                while remaining:
+                    chunk = self.rfile.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        raise CaptureError("The upload ended before Content-Length bytes arrived.", status=400)
+                    temporary.write(chunk)
+                    remaining -= len(chunk)
+            document = _analyze_file(temporary_path, filename)
+            document["meta"]["processingMs"] = round((time.monotonic() - started) * 1000, 1)
+            payload = _json_bytes(document)
+            self._send_bytes(payload, "application/json; charset=utf-8", compress=True)
+        except CaptureError as exc:
+            self._send_json({"ok": False, "error": exc.message}, status=exc.status)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception:
+            traceback.print_exc()
+            self._send_json(
+                {"ok": False, "error": "The capture could not be processed. Check the server log for details."},
+                status=500,
+            )
+        finally:
+            if temporary_path:
+                with contextlib.suppress(OSError):
+                    Path(temporary_path).unlink()
+
+    def _send_json(self, document: dict, status: int = 200) -> None:
+        payload = json.dumps(document, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+        self._send_bytes(payload, "application/json; charset=utf-8", status=status, compress=True)
+
+    def _send_bytes(self, payload: bytes, content_type: str, status: int = 200, compress: bool = False) -> None:
+        body = payload
+        encoding = None
+        if compress and len(payload) > 1024 and "gzip" in self.headers.get("Accept-Encoding", "").lower():
+            body = gzip.compress(payload, compresslevel=6)
+            encoding = "gzip"
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        if encoding:
+            self.send_header("Content-Encoding", encoding)
+            self.send_header("Vary", "Accept-Encoding")
+        self.end_headers()
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+            self.wfile.write(body)
+
+    def log_message(self, fmt: str, *args) -> None:
+        sys.stderr.write("  %s\n" % (fmt % args))
+
+
+def port_available(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def choose_port(host: str, requested: int | None) -> int:
+    if requested:
+        if port_available(host, requested):
+            return requested
+        print(f"Port {requested} is busy; looking for a free port instead…")
+    for port in PORT_RANGE:
+        if port_available(host, port):
+            return port
+    raise SystemExit("No free port in 8080–8099. Pass --port with another number.")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Serve the ESXtop Lens application.")
+    parser.add_argument("--port", type=int, default=None, help="preferred port (default: first free 8080–8099)")
+    parser.add_argument("--host", default="127.0.0.1", help="bind address (default: 127.0.0.1)")
+    parser.add_argument("--no-browser", action="store_true", help="do not open a browser")
+    args = parser.parse_args(argv)
+
+    if not (WEB_ROOT / "index.html").exists():
+        print(f"Could not find {WEB_ROOT / 'index.html'}.", file=sys.stderr)
+        return 1
+
+    port = choose_port(args.host, args.port)
+    handler = lambda *a, **kw: Handler(*a, directory=str(WEB_ROOT), **kw)  # noqa: E731
+    try:
+        server = http.server.ThreadingHTTPServer((args.host, port), handler)
+    except OSError as exc:
+        print(f"Could not start the server: {exc}", file=sys.stderr)
+        return 1
+    server.daemon_threads = True
+
+    def _stop(signum, frame):  # noqa: ARG001
+        raise KeyboardInterrupt
+
+    with contextlib.suppress(ValueError, OSError):
+        signal.signal(signal.SIGTERM, _stop)
+
+    shown_host = "localhost" if args.host in ("127.0.0.1", "0.0.0.0") else args.host
+    url = f"http://{shown_host}:{port}/"
+
+    print()
+    print("  ESXtop Lens")
+    print("  --------------------")
+    print(f"  Version : {APP_VERSION}")
+    print(f"  Serving : {WEB_ROOT}")
+    print(f"  Open    : {url}")
+    print(f"  Upload  : up to {config.max_upload_bytes() // (1024 * 1024)} MB")
+    print("  Stop    : Ctrl+C")
+    print()
+
+    if not args.no_browser:
+        timer = threading.Timer(0.7, lambda: webbrowser.open(url))
+        timer.daemon = True
+        timer.start()
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n  Stopped.")
+    finally:
+        server.server_close()
+        SESSIONS.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
