@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ESXtop Lens is a dependency-free Python app with a vanilla ES-module frontend.
-FROM python:3.12-alpine
+FROM python:3.15-alpine
 
 ARG APP_VERSION=dev
 ARG IMAGE_TAG=local
