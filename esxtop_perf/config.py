@@ -25,7 +25,7 @@ def max_decompressed_bytes() -> int:
 
 
 def max_series() -> int:
-    return _int("ESXTOP_MAX_SERIES", 120_000)
+    return _int("ESXTOP_MAX_SERIES", 200_000)
 
 
 def max_rows() -> int:
@@ -33,7 +33,7 @@ def max_rows() -> int:
 
 
 def max_cells() -> int:
-    return _int("ESXTOP_MAX_CELLS", 12_000_000)
+    return _int("ESXTOP_MAX_CELLS", 20_000_000)
 
 
 def session_ttl_seconds() -> int:

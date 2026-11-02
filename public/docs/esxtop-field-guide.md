@@ -56,9 +56,9 @@ If you need to limit the entities, use `-export-entity` / `-import-entity` durin
 
 ### Transfer and retention
 
-The CSV can be tens or hundreds of megabytes, and the KB notes that some hosts have produced up to 120,000 columns. Copy it off the host, then remove it when the investigation is finished. Do not store the only copy on a datastore that may be failing.
+The CSV can be tens or hundreds of megabytes, and the KB notes that some hosts have produced up to 120,000 columns. Observed all-metric captures can exceed that; one recent capture had 145,697 metric columns. Copy the file off the host, then remove it when the investigation is finished. Do not store the only copy on a datastore that may be failing.
 
-The application defaults to 12,000,000 data cells, 120,000 metric columns and 50,000 samples. Those defaults are deliberately sized to admit the commonly cited 120,000-column host capture at 100 samples. They are configurable with `ESXTOP_MAX_CELLS`, `ESXTOP_MAX_SERIES` and `ESXTOP_MAX_ROWS`.
+The application defaults to 20,000,000 data cells, 200,000 metric columns and 50,000 samples. Those defaults admit the observed 145,697-column capture and allow 100 samples at the full 200,000-column width, or 137 samples of the observed capture. They are configurable with `ESXTOP_MAX_CELLS`, `ESXTOP_MAX_SERIES` and `ESXTOP_MAX_ROWS`.
 
 Sample arrays are not sent to the browser with the first response. The parser stores them in a short-lived SQLite session; charts request only the series they display. This keeps the initial payload and browser memory small. Sessions expire after 30 minutes by default (`ESXTOP_SESSION_TTL_MINUTES`) and are deleted at shutdown.
 

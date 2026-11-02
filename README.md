@@ -241,14 +241,14 @@ The **signal score** is the percentage of rule-evaluated series currently inside
 
 ## Input and session limits
 
-The current all-metric defaults are deliberately sized to handle the known 120,000-column scenario:
+The current all-metric defaults admit captures up to 200,000 metric columns:
 
 | Limit | Default | Environment variable |
 | --- | --- | --- |
 | Upload | 512 MB | `ESXTOP_MAX_UPLOAD_MB` |
 | Decompressed stream | 1.5 GB | `ESXTOP_MAX_DECOMPRESSED_MB` |
-| Total data cells | 12,000,000 | `ESXTOP_MAX_CELLS` |
-| Metric columns | 120,000 | `ESXTOP_MAX_SERIES` |
+| Total data cells | 20,000,000 | `ESXTOP_MAX_CELLS` |
+| Metric columns | 200,000 | `ESXTOP_MAX_SERIES` |
 | Samples | 50,000 | `ESXTOP_MAX_ROWS` |
 | Session TTL | 30 minutes | `ESXTOP_SESSION_TTL_MINUTES` |
 | Concurrent sessions | 4 | `ESXTOP_MAX_SESSIONS` |
@@ -257,7 +257,7 @@ The current all-metric defaults are deliberately sized to handle the known 120,0
 
 These are safety settings, not esxtop limits. Increase them for a larger single-user box; lower them for an exposed/multi-user deployment. The browser does **not** receive all sample arrays up front. Only metadata, statistics and findings are sent initially; charts fetch their visible series from `/api/series`, and the session database is deleted after the TTL or server shutdown.
 
-The 8M-cell/50k-column caps from the earlier version are gone. A 120,000-column × 100-sample capture fits inside the default cell limit; larger captures can raise `ESXTOP_MAX_CELLS` when the container has enough memory and `/tmp` space.
+The 8M-cell/50k-column caps from the earlier version are gone. The 200,000-column ceiling covers the observed 145,697-column capture. The 20,000,000-cell limit allows 100 samples at the full 200,000-column width, or 137 samples of the observed 145,697-column capture; raise `ESXTOP_MAX_CELLS` for longer captures when the container has enough memory and `/tmp` space.
 
 ## API
 

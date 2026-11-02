@@ -1,16 +1,34 @@
 from __future__ import annotations
 
 import gzip
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from esxtop_perf import config
 from esxtop_perf.analysis import build_analysis
 from esxtop_perf.catalog import canonical_metric, group_family
 from esxtop_perf.parser import CaptureError, parse_capture
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "public" / "demo" / "esxtop-demo.csv"
+
+
+class ConfigLimitTests(unittest.TestCase):
+    def test_default_series_limit_supports_observed_capture(self) -> None:
+        with patch.dict(os.environ, {"ESXTOP_MAX_SERIES": ""}):
+            self.assertEqual(config.max_series(), 200_000)
+
+    def test_default_cell_limit_preserves_100_samples(self) -> None:
+        with patch.dict(os.environ, {"ESXTOP_MAX_CELLS": ""}):
+            self.assertEqual(config.max_cells(), 20_000_000)
+            self.assertGreaterEqual(config.max_cells(), 200_000 * 100)
+
+    def test_series_limit_remains_configurable(self) -> None:
+        with patch.dict(os.environ, {"ESXTOP_MAX_SERIES": "250000"}):
+            self.assertEqual(config.max_series(), 250_000)
 
 
 class DemoAnalysisTests(unittest.TestCase):
