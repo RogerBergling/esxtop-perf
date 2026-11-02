@@ -1434,8 +1434,8 @@ export function renderCapture(ctx) {
   };
   const steps = [
     ['Start esxtop interactively', 'Open an SSH session to the ESXi host as root and run <code>esxtop</code>. Do not add <code>-a</code> here; you are preparing a focused field layout.'],
-    ['Open the panel you need', 'Use <b>u</b> for Disk Device, <b>d</b> for Disk Adapter, <b>c</b> for CPU, <b>m</b> for memory, or <b>n</b> for network. For a disk-focused capture, configure both <b>u</b> and <b>d</b>.'],
-    ['Select fields with f', 'Press <b>f</b> to open the field-selection panel. Enable only the counters you need. Press <b>o</b> if you also want to reorder them. Repeat this in every panel you want to exclude or include; the rc file stores all panel selections.'],
+    ['Open the panel you need', 'Use <b>d</b> for Disk Adapter, <b>u</b> for Disk Device, <b>v</b> for VM Disk, <b>c</b> for CPU, <b>m</b> for memory, or <b>n</b> for network. For a complete storage view, configure <b>d</b>, <b>u</b> and <b>v</b> in the same session.'],
+    ['Select fields with f', 'Press <b>f</b> to open the field-selection panel. Enable only the counters you need. Press <b>o</b> if you also want to reorder them. Repeat this in every panel you want to exclude or include; the rc file stores all panel selections. To collect only storage, clear the fields you do not want in <b>c</b>, <b>m</b>, <b>n</b>, <b>i</b> and <b>p</b> as well.'],
     ['Write the config with W', 'Press <b>W</b> — uppercase, case-sensitive. At the prompt, enter an <b>absolute datastore path</b> such as /vmfs/volumes/datastore1/esxtop-disk.rc. Do not accept a default path under /tmp or the ESXi ramdisk if the file must survive a reboot.'],
     ['Verify the file and header', 'Run a tiny batch test with <code>-n 2</code>, then inspect the CSV header. This proves the config is readable and that the expected counters are present before a long capture.'],
     ['Run the focused capture', 'Use <code>esxtop -b -c &lt;absolute-rc-path&gt; -d &lt;interval&gt; -n &lt;samples&gt;</code>. Do not add <code>-a</code>: it overrides the configuration and collects all statistics.'],
@@ -1463,9 +1463,11 @@ export function renderCapture(ctx) {
           <div class="form-grid">
             <label class="field"><span>Config file path</span><input class="input" id="capture-config" value="/vmfs/volumes/datastore1/esxtop-disk.rc" spellcheck="false"></label>
             <label class="field"><span>Panel to configure</span><select class="select" id="capture-panel">
+              <option value="storage-all">Storage bundle: Adapter + Device + VM Disk</option>
               <option value="disk-both">Disk Device + Disk Adapter</option>
               <option value="disk-device">Disk Device only</option>
               <option value="disk-adapter">Disk Adapter only</option>
+              <option value="vm-disk">VM Disk only</option>
               <option value="cpu">CPU</option>
               <option value="memory">Memory</option>
               <option value="network">Network</option>
@@ -1497,6 +1499,53 @@ head -1 /vmfs/volumes/datastore1/esxtop-test.csv \
         </aside>
       </div>
 
+      <div class="section-head"><div><div class="eyebrow">Multiple panels</div><h2>One rc file can hold the whole storage path</h2></div><p>The rc file stores every panel's field layout, not just the panel you are viewing. You can configure <code>d</code>, <code>u</code> and <code>v</code> in one session and save them together with a single <code>W</code>.</p></div>
+
+      <div class="grid-2">
+        <div class="card flat">
+          <h3>Storage panels that can coexist</h3>
+          <table class="data compact-table"><tbody>
+            <tr><td class="mono">d</td><td><b>Disk Adapter</b> — HBA/adapter latency, queue and throughput.</td></tr>
+            <tr><td class="mono">u</td><td><b>Disk Device</b> — per-LUN/device latency, queue and throughput. This is the closest view to a datastore's backing device.</td></tr>
+            <tr><td class="mono">v</td><td><b>VM Disk</b> — per-VM virtual disk latency, IOPS and throughput.</td></tr>
+            <tr><td class="mono">x</td><td><b>vSAN</b> — only on releases that expose it; not a general Datastore panel.</td></tr>
+          </tbody></table>
+          <div class="callout warning mt-1"><strong>There is no separate Datastore panel in esxtop.</strong> A datastore can span devices or extents, so there is no single Datastore latency row. Use <b>u</b> for the backing device and <b>v</b> for per-VM I/O, then map the datastore to its devices. The vSphere Datastore performance chart is a vCenter metric, not an esxtop panel.</div>
+        </div>
+        <div class="card flat">
+          <h3>Build a storage-only rc</h3>
+          <ol class="mistake-list">
+            <li>Run <code>esxtop</code>.</li>
+            <li>Press <b>d</b>, then <b>f</b>, and select adapter fields.</li>
+            <li>Press <b>u</b>, then <b>f</b>, and select device fields.</li>
+            <li>Press <b>v</b>, then <b>f</b>, and select VM disk fields.</li>
+            <li>In <b>c</b>, <b>m</b>, <b>n</b>, <b>i</b> and <b>p</b>, disable the fields you do not want. The rc stores every panel layout, so leftover fields still appear in batch output.</li>
+            <li>Press uppercase <b>W</b> once and save to a durable path, for example <code>/vmfs/volumes/datastore1/esxtop-storage.rc</code>.</li>
+            <li>Validate with <code>-n 2</code>, then inspect the CSV header for adapter, device and VM-disk counters.</li>
+          </ol>
+          <p class="dim">The “Panel to configure” dropdown above is only a hint. The rc file path you pass to <code>-c</code> is what determines the collected fields.</p>
+        </div>
+      </div>
+
+      <div class="card flat mt-1">
+        <div class="card-kicker">Real file · ESXi 6.0</div>
+        <h3>Anatomy of <code>.esxtop60rc</code></h3>
+        <p>Here is a real ESXi 6.0 file. The number of panel-layout lines changes between ESXi releases; the last line is the options line. Uppercase letters mark selected fields and lowercase letters mark hidden fields, but do not hand-edit this file — always save it with <code>W</code>.</p>
+        <table class="data compact-table"><tbody>
+          <tr><td class="mono">1</td><td class="mono">abcdefghij</td><td>CPU</td></tr>
+          <tr><td class="mono">2</td><td class="mono">abcdefghijklmnopq</td><td>Memory</td></tr>
+          <tr><td class="mono">3</td><td class="mono">ABCDEfGHIJkl</td><td>Disk Adapter — fields A–E and G–J selected</td></tr>
+          <tr><td class="mono">4</td><td class="mono">ABcdeFGhIJKLmnop</td><td>Disk Device — fields A, B, F, G, I–L selected</td></tr>
+          <tr><td class="mono">5</td><td class="mono">aBCDEfghIJKl</td><td>VM Disk — fields B–E and I–K selected</td></tr>
+          <tr><td class="mono">6</td><td class="mono">abcdefghijklmnopq</td><td>Network — all hidden</td></tr>
+          <tr><td class="mono">7</td><td class="mono">abcdef</td><td>Interrupt — all hidden</td></tr>
+          <tr><td class="mono">8</td><td class="mono">abcdef</td><td>CPU Power — all hidden</td></tr>
+          <tr><td class="mono">9–10</td><td class="mono">AbcDEFGHijKlmN<br>ABCdEf</td><td>Additional release-specific panel layouts in this ESXi 6.0 file</td></tr>
+          <tr><td class="mono">11</td><td class="mono">5p</td><td>Options: 5-second delay and the starting panel (<code>p</code>, CPU Power on releases that expose it)</td></tr>
+        </tbody></table>
+        <p class="dim">This example already has the storage panels partly enabled. If you want only storage, clear the fields in the other panels before pressing <code>W</code>. The exact field letters and line count are release-specific; use the interactive <code>f</code> panel as the source of truth.</p>
+      </div>
+
       <div class="section-head"><div><div class="eyebrow">Step by step</div><h2>The exact workflow</h2></div><p>The sequence matters: configure interactively, save with <code>W</code>, then reference that file with <code>-c</code> in batch mode.</p></div>
       <div class="steps-grid">${stepHtml}</div>
 
@@ -1523,6 +1572,7 @@ head -1 /vmfs/volumes/datastore1/esxtop-test.csv \
             <li><b>Assuming <code>.esxtoprc</code>:</b> the default name is release-dependent; press <code>W</code> and read the prompt, or provide an absolute path.</li>
             <li><b>Using a relative <code>-c</code> path:</b> <code>.esxtoprc</code> only works from the directory that contains it. Prefer an absolute datastore path.</li>
             <li><b>Configuring only one panel:</b> the rc file stores all panel layouts. Clear fields in panels you do not want, then recheck the output header.</li>
+            <li><b>Looking for a Datastore panel:</b> esxtop has no separate Datastore panel. Use <code>u</code> for the backing device and <code>v</code> for per-VM I/O, or use the vSphere Datastore chart.</li>
             <li><b>Writing to the datastore under investigation:</b> choose another datastore if possible.</li>
           </ul>
         </div>
@@ -1553,9 +1603,11 @@ head -1 /vmfs/volumes/datastore1/esxtop-test.csv \
       const warning = root.querySelector('#capture-warning');
       const shellQuote = (value) => /^[\w./:@%+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
       const panelLabels = {
+        'storage-all': 'Configure <b>d</b> (Disk Adapter), <b>u</b> (Disk Device) and <b>v</b> (VM Disk) in the same interactive session, then press <b>W</b> once. There is no separate Datastore panel; <b>u</b> and <b>v</b> are the datastore-facing views. Clear the other panels if you want a storage-only capture.',
         'disk-both': 'Configure both <b>u</b> (Disk Device) and <b>d</b> (Disk Adapter) before pressing <b>W</b>.',
         'disk-device': 'Press <b>u</b> (Disk Device), then configure its fields with <b>f</b>.',
         'disk-adapter': 'Press <b>d</b> (Disk Adapter), then configure its fields with <b>f</b>.',
+        'vm-disk': 'Press <b>v</b> (VM Disk), then configure its fields with <b>f</b>.',
         cpu: 'Press <b>c</b> (CPU), then configure its fields with <b>f</b>.',
         memory: 'Press <b>m</b> (Memory), then configure its fields with <b>f</b>.',
         network: 'Press <b>n</b> (Network), then configure its fields with <b>f</b>.',

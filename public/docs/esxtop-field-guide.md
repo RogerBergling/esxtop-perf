@@ -64,7 +64,7 @@ Sample arrays are not sent to the browser with the first response. The parser st
 
 ### Focused capture with `-c`
 
-The full command with `-a` is the broad first look. When you need a smaller, repeatable capture — for example disk device and adapter latency only — prepare a configuration file interactively.
+The full command with `-a` is the broad first look. When you need a smaller, repeatable capture — for example disk adapter, disk device and VM disk latency — prepare a configuration file interactively.
 
 1. Start `esxtop` on the ESXi host.
 2. Switch to the panel: `c` CPU, `m` memory, `u` Disk Device, `d` Disk Adapter, `n` network, or `v` VM disk.
@@ -76,6 +76,46 @@ The full command with `-a` is the broad first look. When you need a smaller, rep
 ```text
 esxtop -b -c /vmfs/volumes/datastore1/esxtop-disk.rc -d 5 -n 60   > /vmfs/volumes/datastore1/esxtop_disk.csv
 ```
+
+### Multiple storage panels in one rc file
+
+An rc file is not one-panel-only. It stores the field layout for **every** panel, so you can configure Disk Adapter (`d`), Disk Device (`u`) and VM Disk (`v`) in the same interactive session and save all of them with a single `W`. Batch mode then collects the union of the selected fields.
+
+| Key | Panel | What it shows |
+|---|---|---|
+| `d` | Disk Adapter | HBA/adapter latency, queue and throughput |
+| `u` | Disk Device | Per-LUN/device latency, queue and throughput. Closest to a datastore's backing device |
+| `v` | VM Disk | Per-VM virtual disk latency, IOPS and throughput |
+| `x` | vSAN | vSAN-specific panel on releases that expose it; not a general Datastore panel |
+
+**There is no separate Datastore panel in esxtop.** A datastore can span devices or extents, so there is no single Datastore latency row. Use `u` for the backing device and `v` for per-VM I/O, then map the datastore to its devices. The vSphere Datastore performance chart is a vCenter metric, not an esxtop panel.
+
+To build a storage-only rc:
+
+1. Run `esxtop`.
+2. Press `d`, then `f`, and select adapter fields.
+3. Press `u`, then `f`, and select device fields.
+4. Press `v`, then `f`, and select VM-disk fields.
+5. In the other panels (`c`, `m`, `n`, `i`, `p`), disable the fields you do not want. The rc stores all panel layouts, so leftovers still appear in the batch header.
+6. Press uppercase `W` once and save to a durable path, for example `/vmfs/volumes/datastore1/esxtop-storage.rc`.
+7. Validate with `-n 2` and inspect the header for adapter, device and VM-disk counters.
+
+A real ESXi 6.0 `.esxtop60rc` looks like this:
+
+| Line | Content | Meaning |
+|---|---|---|
+| 1 | `abcdefghij` | CPU |
+| 2 | `abcdefghijklmnopq` | Memory |
+| 3 | `ABCDEfGHIJkl` | Disk Adapter — fields A–E and G–J selected |
+| 4 | `ABcdeFGhIJKLmnop` | Disk Device — fields A, B, F, G, I–L selected |
+| 5 | `aBCDEfghIJKl` | VM Disk — fields B–E and I–K selected |
+| 6 | `abcdefghijklmnopq` | Network — all hidden |
+| 7 | `abcdef` | Interrupt — all hidden |
+| 8 | `abcdef` | CPU Power — all hidden |
+| 9–10 | `AbcDEFGHijKlmN` / `ABCdEf` | Additional release-specific panel layouts in this ESXi 6.0 file |
+| 11 | `5p` | Options: 5-second delay and the starting panel (`p`, CPU Power on releases that expose it) |
+
+The number of panel-layout lines is release-specific; the last line is the options line. Uppercase letters mark selected fields and lowercase letters mark hidden fields, but do not hand-edit the file. Always save it with `W`.
 
 Important details:
 

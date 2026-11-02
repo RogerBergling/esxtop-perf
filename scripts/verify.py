@@ -91,6 +91,9 @@ def main() -> int:
     check("## 2. The capture command, token by token" in guide, "field guide lacks capture-command section")
     check("## 5. CPU counters" in guide, "field guide lacks CPU section")
     check("### Focused capture with `-c`" in guide, "field guide lacks focused capture manual")
+    check("Multiple storage panels in one rc file" in guide, "field guide lacks multi-panel rc guidance")
+    check("There is no separate Datastore panel" in guide, "field guide must explain that Datastore is not an esxtop panel")
+    check("ABCDEfGHIJkl" in guide, "field guide lacks the annotated .esxtop60rc example")
     check("## 7. Storage counters" in guide, "field guide lacks storage section")
     for url in (
         "https://knowledge.broadcom.com/external/article/382249/",
@@ -125,6 +128,10 @@ def main() -> int:
     app_js = (ROOT / "public/assets/js/app.js").read_text(encoding="utf-8")
     for marker in ("#/guide", "#/capture", "#/metrics", "#/insights", "renderOverview", "renderCapture", "uploadFile", "ensureSeries", "/api/series"):
         check(marker in app_js, f"app.js missing route/feature marker: {marker}")
+
+    pages_js = (ROOT / "public/assets/js/pages.js").read_text(encoding="utf-8")
+    for marker in ("Storage bundle: Adapter + Device + VM Disk", "There is no separate Datastore panel in esxtop", "Anatomy of <code>.esxtop60rc</code>", "ABCDEfGHIJkl"):
+        check(marker in pages_js, f"Capture page missing multi-panel marker: {marker}")
 
     if FAILURES:
         print(f"FAILED: {len(FAILURES)} issue(s) across {CHECKS} checks")

@@ -207,9 +207,9 @@ esxtop -b -a -d 2 -n 300 \
 When an all-metric capture is too large, prepare a repeatable field layout interactively:
 
 1. Run `esxtop` on the ESXi host.
-2. Switch to the panel: `u` Disk Device, `d` Disk Adapter, `c` CPU, `m` memory, `n` network.
+2. Switch to the panel: `u` Disk Device, `d` Disk Adapter, `v` VM Disk, `c` CPU, `m` memory, `n` network.
 3. Press `f` to enable/disable fields and `o` to reorder if needed.
-4. Repeat for every panel you want to include or exclude; the configuration file stores all panel layouts.
+4. Repeat for every panel you want to include or exclude; the configuration file stores all panel layouts. A single rc can contain `d`, `u` and `v` together, but clear the fields in the panels you do not want.
 5. Press uppercase **`W`**. At the prompt, enter an absolute datastore path such as `/vmfs/volumes/datastore1/esxtop-disk.rc`.
 6. Validate with a short `-n 2` test, then run the real capture.
 
@@ -219,6 +219,8 @@ esxtop -b -c /vmfs/volumes/datastore1/esxtop-disk.rc -d 5 -n 60 \
 ```
 
 **Do not add `-a`** to a focused command — Broadcom documents that `-a` overrides the configuration and collects all statistics. `-c` takes an absolute path; `.esxtoprc` is not a guaranteed default name. The exact default varies by ESXi release and is shown in the `W` prompt. Do not keep the only copy under `/tmp` or on an unhealthy datastore.
+
+**One rc, several storage panels.** `d` (Disk Adapter), `u` (Disk Device) and `v` (VM Disk) can all coexist in one rc file; configure each panel in the same interactive session and press `W` once. There is no separate Datastore panel in esxtop: a datastore can span devices/extents, so use `u` for the backing device and `v` for per-VM I/O, or use the vSphere Datastore chart. The file stores every panel layout, so clear fields in the other panels if you want a storage-only capture. The number of panel-layout lines is release-specific; the last line holds options. See the [field guide](public/docs/esxtop-field-guide.md#focused-capture-with--c) for a real `.esxtop60rc` annotated line by line.
 
 The app includes a step-by-step **Capture** page and command builder at `#/capture`. A detailed version is also in the [field guide](public/docs/esxtop-field-guide.md#focused-capture-with--c).
 
