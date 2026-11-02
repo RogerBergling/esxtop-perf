@@ -197,6 +197,46 @@ export function vmSeries(document, vmName) {
   return (document?.series || []).filter((series) => series.vm === vmName || series.entity === vmName);
 }
 
+export function vmSummary(document, name) {
+  const list = vmSeries(document, name);
+  const numeric = list.filter((series) => series.kind === 'numeric');
+  const pick = (metric, field = 'p95', mode = 'max') => {
+    const candidates = numeric.filter((series) => series.metric === metric && series.stats?.count);
+    if (!candidates.length) return null;
+    return candidates.sort((left, right) => (
+      mode === 'min'
+        ? (Number(left.stats?.[field]) || Infinity) - (Number(right.stats?.[field]) || Infinity)
+        : (Number(right.stats?.[field]) || -Infinity) - (Number(left.stats?.[field]) || -Infinity)
+    ))[0];
+  };
+  const groupCpu = pick('%USED');
+  const vcpuUsed = pick('%USED', 'p95', 'max');
+  const ready = pick('%RDY');
+  const mlmtd = pick('%MLMTD');
+  const cstop = pick('%CSTP');
+  const balloon = pick('MCTLSZ');
+  const swap = pick('SWCUR');
+  const swapIn = pick('SWR/s');
+  const swapOut = pick('SWW/s');
+  const numa = pick('N%L', 'p05', 'min');
+  const disk = pick('GAVG/cmd');
+  const drop = pick('%DRPTX', 'p95', 'max') || pick('%DRPRX');
+  const configured = pick('MEMSZ', 'last');
+  const members = pick('Members', 'last');
+  const vcpuSeries = list.filter((series) => series.group?.toLowerCase().startsWith('vcpu') && series.metric === '%USED');
+  const worlds = new Set(vcpuSeries.map((series) => series.world || series.instance));
+  const status = worstStatus(list.map((series) => series.status));
+  const findings = (document.findings || []).filter((finding) => finding.entity === name);
+  return {
+    name, list, numeric, status, findings,
+    cpuUsed: groupCpu || vcpuUsed,
+    ready, mlmtd, cstop, balloon, swap, swapIn, swapOut, numa, disk, drop,
+    configuredMemory: configured?.stats?.last ?? null,
+    vcpus: worlds.size || (members?.stats?.last ?? null),
+    seriesCount: list.length,
+  };
+}
+
 export function vmFindings(document, vmName) {
   return (document?.findings || []).filter((finding) => finding.entity === vmName);
 }

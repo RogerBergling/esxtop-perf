@@ -488,6 +488,8 @@ table.data tr.clickable:hover td.name a { text-decoration: underline; }
 .finding-meta .entity { color: var(--text-soft); font-size: .73rem; font-weight: 560; }
 .finding-meta .meta-sep { color: var(--line-strong); }
 .finding p { margin: .45rem 0 .35rem; color: var(--muted); font-size: .8rem; }
+.finding .finding-technical { border-left: 2px solid var(--line-strong); padding-left: .5rem; color: var(--dim); font-size: .75rem; }
+.finding .finding-technical strong { color: var(--text-soft); }
 .finding .recommendation {
   font-size: .8rem; color: var(--text-soft); border-left: 2px solid var(--line); padding-left: .6rem; margin: .5rem 0 .45rem;
 }
@@ -526,6 +528,11 @@ table.data tr.clickable:hover td.name a { text-decoration: underline; }
 .metric-side dt { color: var(--dim); font-size: .64rem; text-transform: uppercase; letter-spacing: .08em; margin-top: .55rem; }
 .metric-side dd { margin: .12rem 0 0; color: var(--text-soft); }
 .metric-side dd:first-of-type { margin-top: 0; }
+.metric-technical { margin-top: .7rem; padding-top: .6rem; border-top: 1px solid var(--line); }
+.metric-technical p { margin: .3rem 0; color: var(--muted); font-size: .75rem; }
+.metric-technical .mono { color: var(--text-soft); font-size: .7rem; overflow-wrap: anywhere; }
+.metric-technical .tech-list { margin: .3rem 0 0; padding-left: 1rem; color: var(--muted); font-size: .74rem; }
+.metric-technical .tech-list li { margin: .3rem 0; }
 .stat-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: .5rem; margin: .55rem 0 .8rem; }
 .stat-box { border: 1px solid var(--line); border-radius: 9px; background: var(--panel); padding: .45rem .55rem; }
 .stat-box span { display: block; font-size: .6rem; color: var(--dim); text-transform: uppercase; letter-spacing: .08em; }

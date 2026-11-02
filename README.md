@@ -28,6 +28,7 @@ Both screenshots use the bundled synthetic demo capture. The demo contains inten
 - **CPU, memory, storage, network, VM** — host cores, Group Cpu, Vcpu, Group Memory, Virtual Disk, Disk Device/Adapter, Network Port, power and vSAN.
 - **Green / yellow / red** — a transparent rule engine with sustained percentile checks, not a single-spike alarm.
 - **Evidence and references** — every finding shows the observed value, guardrail, why it matters, a next action and Broadcom/Yellow Bricks sources.
+- **HTML and PDF reports** — a standalone HTML report and browser print-to-PDF with the executive summary, a prioritized “What to do next” action plan, every finding, and a technical reference covering KAVG, DAVG, GAVG, %RDY, %MLMTD, %CSTP and the other counters behind the findings.
 - **Written field guide** — the capture command explained token by token, CSV anatomy, counter semantics, playbooks and caveats.
 - **Focused capture manual** — a step-by-step `-c` workflow with a command builder, verification recipe and the traps that make a configuration silently ineffective.
 - **Local-only processing** — captures are parsed into a short-lived local session. No analytics, no third-party upload; the session is removed after 30 minutes or on restart.
@@ -92,7 +93,7 @@ The launcher serves the app on the first free port in **8080–8099** unless `--
 
 ```bash
 docker build \
-  --build-arg APP_VERSION=1.2.0 \
+  --build-arg APP_VERSION=1.3.0 \
   --build-arg IMAGE_TAG=local \
   --build-arg GIT_SHA="$(git rev-parse --short HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -158,7 +159,9 @@ esxtop-perf/
 │   │   └── js/
 │   │       ├── app.js      Hash router, theme, upload lifecycle
 │   │       ├── theme-init.js Pre-paint local theme
-│   │       ├── pages.js    Overview, category pages, VM, insights, explorer
+│   │       ├── pages.js    Overview, category pages, VM, insights, explorer, report view
+│   │       ├── report.js   Standalone HTML report and print-to-PDF export
+│   │       ├── technical.js Shared KAVG/DAVG/GAVG/%RDY and counter relationships
 │   │       ├── charts.js   SVG line chart, tooltip, legend, sparklines
 │   │       ├── components.js UI helpers and formatting
 │   │       └── markdown.js Dependency-free Markdown renderer
@@ -240,6 +243,12 @@ The engine uses P95 for sustained conditions, P05 for “lower is worse” metri
 The **signal score** is the percentage of rule-evaluated series currently inside their guardrail. It is a triage aid, not a capacity-planning metric and not a vSphere alarm score.
 
 > Performance is contextual. A red signal is not automatically the root cause, and a clean report is not proof that the host is healthy. Confirm every recommendation in your own guest, array and network.
+
+## Reports
+
+Open **Report** from the overview or the `#/report` route. **Export HTML** downloads a standalone, self-contained report. **Export PDF** opens the browser print dialog; choose **Save as PDF** and keep A4.
+
+The report contains the executive summary, a prioritized **What to do next** action plan derived from the findings, the findings themselves, and a **Technical reference** that explains the counters behind them — including KAVG, DAVG, GAVG, QAVG, `%RDY`, `%MLMTD`, `%CSTP`, ballooning, swap, NUMA locality and storage queue behaviour. The same technical notes appear on metric pages, finding cards, category pages and VM drilldowns.
 
 ## Input and session limits
 
@@ -348,7 +357,7 @@ ghcr.io/rogerbergling/esxtop-perf
 | --- | --- |
 | Push to `main` | `latest`, `main`, `sha-<short>` |
 | Push to another branch | `<branch>`, `sha-<short>` |
-| Tag `v1.2.0` | `v1.2.0`, `sha-<short>` |
+| Tag `v1.3.0` | `v1.3.0`, `sha-<short>` |
 | Manual run | Tags for the selected ref |
 
 No repository secrets are required; the workflow uses `GITHUB_TOKEN`. A new GHCR package is private by default. Make it public once, or authenticate the host with `read:packages`.

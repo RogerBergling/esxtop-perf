@@ -51,6 +51,20 @@ _SYSTEM_GROUP_NAMES = {
     "storage",
 }
 
+# ESXi system worlds often carry a world ID suffix, for example
+# ``hostd.20994601`` or ``python.20979311``. These are not VM groups.
+_SYSTEM_WORLD_SUFFIX_RE = re.compile(r"\.\d{6,}$")
+_SYSTEM_NAME_RE = re.compile(
+    r"^(?:"
+    r"system\d*|helper\d*|idle\d*|"
+    r"hostd(?:cgiserver|-probe)?|vpxa|etcd|envoy|"
+    r"infravisor(?:-spherelet)?|net-lacp|clusteragent|vmkeventd|"
+    r"init|vobd|dcui|ntpd|snmpd|sshd|"
+    r"vmkernel|vmk|driver|console|management|vsan|vsphere|storage"
+    r")(?:[.:-].*)?$",
+    re.IGNORECASE,
+)
+
 
 class CaptureError(Exception):
     """An error that should be returned to the client as a 4xx response."""
@@ -239,6 +253,10 @@ def _systemish(name: str) -> bool:
         return True
     if lowered in _SYSTEM_GROUP_NAMES:
         return True
+    if _SYSTEM_WORLD_SUFFIX_RE.search(lowered):
+        return True
+    if _SYSTEM_NAME_RE.match(lowered):
+        return True
     return any(lowered.startswith(prefix) for prefix in ("idle", "helper", "system:"))
 
 
@@ -250,6 +268,14 @@ def _entity_for(header: dict[str, str]) -> dict[str, str]:
 
     if lowered.startswith("vcpu"):
         vm_name, world = _parse_vcpu_instance(instance)
+        if _systemish(vm_name):
+            return {
+                "scope": "host",
+                "entity": header.get("host", ""),
+                "vm": "",
+                "world": world,
+                "entityKind": "system vCPU",
+            }
         return {
             "scope": "vm",
             "entity": vm_name or instance,
@@ -272,6 +298,13 @@ def _entity_for(header: dict[str, str]) -> dict[str, str]:
 
     if lowered.startswith("virtual disk"):
         vm_name = _parse_virtual_disk_instance(instance)
+        if _systemish(vm_name):
+            return {
+                "scope": "host",
+                "entity": header.get("host", ""),
+                "vm": "",
+                "entityKind": "system virtual disk",
+            }
         return {
             "scope": "vm",
             "entity": vm_name or instance,
@@ -293,6 +326,13 @@ def _entity_for(header: dict[str, str]) -> dict[str, str]:
         match = re.search(r"(.+?)\.eth\d+", instance, re.IGNORECASE)
         if match:
             vm_name = match.group(1).strip().rsplit(":", 1)[-1]
+            if _systemish(vm_name):
+                return {
+                    "scope": "host",
+                    "entity": instance or header.get("host", ""),
+                    "vm": "",
+                    "entityKind": "system network port",
+                }
             return {
                 "scope": "vm",
                 "entity": vm_name,

@@ -43,6 +43,8 @@ def main() -> int:
         "public/assets/js/app.js",
         "public/assets/js/theme-init.js",
         "public/assets/js/pages.js",
+        "public/assets/js/report.js",
+        "public/assets/js/technical.js",
         "public/assets/js/charts.js",
         "public/assets/js/components.js",
         "public/assets/js/markdown.js",
@@ -64,9 +66,9 @@ def main() -> int:
         FAILURES.append(f"public/version.json is not valid JSON: {exc}")
     check(bool(version.get("version")), "public/version.json must contain a version")
     check(version.get("version") != "0.0.0", "version must not be a placeholder")
-    check("1.2.0" in (ROOT / "esxtop_perf/catalog.py").read_text(encoding="utf-8"), "APP_VERSION is not 1.2.0")
+    check("1.3.0" in (ROOT / "esxtop_perf/catalog.py").read_text(encoding="utf-8"), "APP_VERSION is not 1.3.0")
     package = (ROOT / "esxtop_perf/catalog.py").read_text(encoding="utf-8")
-    check('APP_VERSION = "1.2.0"' in package, "catalog APP_VERSION must match public/version.json")
+    check('APP_VERSION = "1.3.0"' in package, "catalog APP_VERSION must match public/version.json")
 
     index = (ROOT / "public/index.html").read_text(encoding="utf-8")
     check("/assets/css/app.css" in index, "index.html does not load the stylesheet")
@@ -97,6 +99,9 @@ def main() -> int:
     check("### Sizing large captures" in guide, "field guide lacks large-capture sizing guidance")
     check("1.23 GiB" in guide, "field guide lacks the measured memory baseline")
     check("ESXTOP_MAX_CELLS: \"100000000\"" in guide, "field guide lacks the 10 GB / 100M-cell example")
+    check("### Core counter relationships" in guide, "field guide lacks core counter relationships")
+    check("GAVG = DAVG + KAVG" in guide, "field guide lacks the storage latency relationship")
+    check("system worlds" in guide, "field guide must explain system worlds versus VMs")
     check("ESXi 8.0 U3" in guide, "field guide must identify the real rc example as ESXi 8.0 U3")
     check("ESXi 6.0" not in guide, "field guide must not label the ESXi 8.0 U3 rc as ESXi 6.0")
     check("## 7. Storage counters" in guide, "field guide lacks storage section")
@@ -112,6 +117,8 @@ def main() -> int:
         check(phrase.lower() in readme.lower(), f"README is missing section/keyword: {phrase}")
     check("### Sizing large captures" in readme, "README lacks large-capture sizing guidance")
     check("peak memory ≈ 0.6 GB" in readme, "README lacks the memory sizing formula")
+    check("## Reports" in readme, "README lacks the report documentation")
+    check("## Reports" in readme and "What to do next" in readme, "README lacks the report action-plan documentation")
     check("ghcr.io/rogerbergling/esxtop-perf" in readme, "README does not name the GHCR image")
 
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
@@ -133,13 +140,21 @@ def main() -> int:
 
     # A few frontend route smoke assertions are cheap and catch accidental drift.
     app_js = (ROOT / "public/assets/js/app.js").read_text(encoding="utf-8")
-    for marker in ("#/guide", "#/capture", "#/metrics", "#/insights", "renderOverview", "renderCapture", "uploadFile", "ensureSeries", "/api/series"):
+    for marker in ("#/guide", "#/capture", "#/metrics", "#/insights", "#/report", "renderOverview", "renderCapture", "renderReport", "uploadFile", "ensureSeries", "/api/series"):
         check(marker in app_js, f"app.js missing route/feature marker: {marker}")
 
     pages_js = (ROOT / "public/assets/js/pages.js").read_text(encoding="utf-8")
-    for marker in ("Storage bundle: Adapter + Device + VM Disk", "There is no separate Datastore panel in esxtop", "Real file · ESXi 8.0 U3", "Anatomy of a real <code>.esxtop60rc</code>", "ABCDEfGHIJkl", "Large sample count?", "Sizing large captures"):
+    for marker in ("Storage bundle: Adapter + Device + VM Disk", "There is no separate Datastore panel in esxtop", "Real file · ESXi 8.0 U3", "Anatomy of a real <code>.esxtop60rc</code>", "ABCDEfGHIJkl", "Large sample count?", "Sizing large captures", "Capture report", "Export HTML", "Export PDF", "reportBody(doc)", "Technical vocabulary", "Technical detail", "How these counters fit together", "Support workflow", "Internal ESXi system worlds"):
         check(marker in pages_js, f"Capture page missing multi-panel marker: {marker}")
     check("Real file · ESXi 6.0" not in pages_js, "Capture page must not label the ESXi 8.0 U3 rc as ESXi 6.0")
+
+    report_js = (ROOT / "public/assets/js/report.js").read_text(encoding="utf-8")
+    for marker in ("downloadReportHTML", "openReportPrintWindow", "reportBody", "reportStyles", "Save as PDF", "Internal ESXi system worlds", "What to do next", "Technical reference", "Decision guide", "Change control", "KAVG", "DAVG", "GAVG"):
+        check(marker in report_js, f"report.js missing export marker: {marker}")
+
+    technical_js = (ROOT / "public/assets/js/technical.js").read_text(encoding="utf-8")
+    for marker in ("TECHNICAL_REFERENCE", "TECHNICAL_RELATIONSHIPS", "KAVG/cmd", "DAVG/cmd", "GAVG/cmd", "what:", "check:"):
+        check(marker in technical_js, f"technical.js missing reference marker: {marker}")
 
     if FAILURES:
         print(f"FAILED: {len(FAILURES)} issue(s) across {CHECKS} checks")

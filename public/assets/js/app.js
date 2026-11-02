@@ -10,6 +10,7 @@ import {
   renderMetrics,
   renderNotFound,
   renderOverview,
+  renderReport,
   renderSeries,
   renderVm,
   renderVms,
@@ -50,6 +51,7 @@ const NAV_ITEMS = [
   ['network', 'Network', '#/network'],
   ['vms', 'VMs', '#/vms'],
   ['insights', 'Insights', '#/insights'],
+  ['report', 'Report', '#/report'],
   ['metrics', 'Metrics', '#/metrics'],
   ['guide', 'Guide', '#/guide'],
 ];
@@ -284,6 +286,7 @@ function pageFor(route) {
   if (first === 'vms') return renderVms;
   if (first === 'vm') return (context) => renderVm(context, route.segments.slice(1).join('/'));
   if (first === 'insights') return renderInsights;
+  if (first === 'report') return renderReport;
   if (first === 'metrics') return (context) => renderMetrics(context, route.query);
   if (first === 'metric') return (context) => renderMetric(context, route.segments.slice(1).join('/'));
   if (first === 'series') return (context) => renderSeries(context, route.segments.slice(1).join('/'));

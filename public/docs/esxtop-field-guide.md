@@ -237,6 +237,18 @@ Important parsing details:
 5. A column can be categorical. Examples: `Uplink?` (`Y`/`N`), `Link Up?`, `Kernel State` and `VSAN Enabled?`. These series should not be charted as numbers.
 6. A capture is **wide**, not long. Adding ten VMs adds many columns, not rows.
 7. The same logical metric can appear at several layers: VM virtual disk, physical device, adapter, path and world. They measure different points in the stack.
+8. `Group Cpu`, `Group Memory` and `Vcpu` can contain ESXi system worlds as well as VMs. Names such as `system1`, `hostd.20994601` and `python.20979311` are internal worlds, not VM groups; the analysis excludes them from the VM table and from VM-scoped findings, while keeping their raw series searchable.
+
+### Core counter relationships
+
+- **CPU ready is an umbrella.** `%RDY` includes ready time caused by `%MLMTD` (an administrative CPU limit) and `%CSTP` (SMP co-stop). Remove a limit before treating ready time as host contention.
+- **Wait is not always starvation.** `%WAIT` includes `%IDLE` and `%SWPWT`. High `%WAIT` can be a normal idle VM; use `%VMWAIT`, `%IDLE` and `%RDY` to separate the causes.
+- **CPU accounting.** `%USED = %RUN + %SYS - %OVRLP` (approximately; accounting varies by counter source). `%USED` is consumption, not scheduler delay.
+- **Memory composition.** `MEMSZ ≈ GRANT + MCTLSZ + SWCUR + untouched`. `MCTLSZ` is ballooned memory; `SWCUR` is VMkernel-swapped memory. Ballooning is cheaper than swap-in, which is synchronous.
+- **Storage latency.** `GAVG = DAVG + KAVG`. `DAVG` is the device/array round trip; `KAVG` is VMkernel/vSCSI time and includes queue wait (`QAVG`). Split `GAVG` before changing the array, the host or the guest.
+- **NUMA.** `N%L` is the local share of VM memory; `NRMEM` and `NLMEM` show the remote/local split. Low locality is a placement or sizing problem, not a guest application bug.
+
+The report's **Technical reference** expands these definitions, and the metric pages show the same notes for the selected counter.
 
 The file suffix is not reliable. The example command names a gzip stream `perf.csv`; ESXtop Lens inspects the first bytes (gzip magic `1f 8b`) rather than trusting the extension.
 

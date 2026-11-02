@@ -18,11 +18,23 @@ import {
   statusRank,
   vmRoute,
   vmSeries,
+  vmSummary,
   worstStatus,
   esc,
 } from './components.js';
 import { lineChart, sparklineSvg } from './charts.js';
 import { render as renderMarkdown } from './markdown.js';
+import {
+  downloadReportHTML,
+  openReportPrintWindow,
+  reportBody,
+  reportStyles,
+} from './report.js';
+import {
+  relationshipsFor,
+  technicalEntries,
+  technicalFor,
+} from './technical.js';
 
 const CATEGORY_META = {
   cpu: {
@@ -274,7 +286,7 @@ function summaryHero(doc) {
           <a class="btn btn-primary" href="#/insights">${icon('insights', 15)} Review findings</a>
           <a class="btn" href="#/metrics">${icon('table', 15)} Browse all metrics</a>
           <button class="btn btn-ghost" type="button" data-download-json>${icon('download', 15)} Export JSON</button>
-          <button class="btn btn-ghost" type="button" data-print>${icon('file', 15)} Print report</button>
+          <a class="btn btn-ghost" href="#/report">${icon('file', 15)} Report</a>
         </div>
       </div>
       <div class="score-wrap">
@@ -297,6 +309,7 @@ function captureTabs(doc, active = 'overview') {
     ['network', 'Network', 'network'],
     ['vms', 'Virtual machines', 'server'],
     ['insights', 'Insights', 'insights'],
+    ['report', 'Report', 'file'],
     ['metrics', 'All metrics', 'table'],
   ];
   return `<div class="category-tabs">
@@ -339,6 +352,7 @@ function findingCard(finding, options = {}) {
   const tone = finding.severity === 'warning' ? 'warn' : finding.severity;
   const references = options.compact ? [] : (finding.references || []);
   const seriesHref = finding.worstSeries ? seriesRoute(finding.worstSeries) : '#/insights';
+  const tech = technicalFor(finding.metric);
   return `<article class="finding ${escapeAttr(tone)}" data-severity="${escapeAttr(finding.severity)}" data-category="${escapeAttr(finding.category)}">
     <div class="finding-head">
       <div>
@@ -357,6 +371,7 @@ function findingCard(finding, options = {}) {
       <span class="evidence">${findingEvidence(finding)}</span>
     </div>
     <p>${esc(finding.summary || '')}</p>
+    ${tech ? `<p class="finding-technical"><strong>${esc(finding.metric)} — ${esc(tech.name)}:</strong> ${tech.what}</p>` : ''}
     ${options.compact ? '' : `<div class="recommendation"><strong>What to check:</strong> ${esc(finding.recommendation || '')}</div>`}
     <div class="finding-actions">
       <a class="btn btn-sm" href="${escapeAttr(seriesHref)}">${icon('arrow', 13)} Inspect signal</a>
@@ -377,46 +392,6 @@ function escapeHtmlSafe(value) {
 
 function emptyState(title, detail) {
   return `<div class="empty-state"><strong>${esc(title)}</strong>${esc(detail || '')}</div>`;
-}
-
-function vmSummary(doc, name) {
-  const list = vmSeries(doc, name);
-  const numeric = list.filter((series) => series.kind === 'numeric');
-  const pick = (metric, field = 'p95', mode = 'max') => {
-    const candidates = numeric.filter((series) => series.metric === metric && series.stats?.count);
-    if (!candidates.length) return null;
-    return candidates.sort((left, right) => (
-      mode === 'min'
-        ? (Number(left.stats?.[field]) || Infinity) - (Number(right.stats?.[field]) || Infinity)
-        : (Number(right.stats?.[field]) || -Infinity) - (Number(left.stats?.[field]) || -Infinity)
-    ))[0];
-  };
-  const groupCpu = pick('%USED');
-  const vcpuUsed = pick('%USED', 'p95', 'max');
-  const ready = pick('%RDY');
-  const mlmtd = pick('%MLMTD');
-  const cstop = pick('%CSTP');
-  const balloon = pick('MCTLSZ');
-  const swap = pick('SWCUR');
-  const swapIn = pick('SWR/s');
-  const swapOut = pick('SWW/s');
-  const numa = pick('N%L', 'p05', 'min');
-  const disk = pick('GAVG/cmd');
-  const drop = pick('%DRPTX', 'p95', 'max') || pick('%DRPRX');
-  const configured = pick('MEMSZ', 'last');
-  const members = pick('Members', 'last');
-  const vcpuSeries = list.filter((series) => series.group?.toLowerCase().startsWith('vcpu') && series.metric === '%USED');
-  const worlds = new Set(vcpuSeries.map((series) => series.world || series.instance));
-  const status = worstStatus(list.map((series) => series.status));
-  const findings = (doc.findings || []).filter((finding) => finding.entity === name);
-  return {
-    name, list, numeric, status, findings,
-    cpuUsed: groupCpu || vcpuUsed,
-    ready, mlmtd, cstop, balloon, swap, swapIn, swapOut, numa, disk, drop,
-    configuredMemory: configured?.stats?.last ?? null,
-    vcpus: worlds.size || (members?.stats?.last ?? null),
-    seriesCount: list.length,
-  };
 }
 
 function vmTable(doc, limit = 200) {
@@ -838,6 +813,7 @@ export function renderImport(ctx) {
         <div class="feature"><div class="feature-icon">${icon('network', 17)}</div><h3>Drops and throughput</h3><p>TX/RX drop percentages, packet and bit rates, link state and per-port or per-VM network signals.</p></div>
         <div class="feature"><div class="feature-icon">${icon('insights', 17)}</div><h3>Explainable findings</h3><p>Every finding states the observed percentile, the guardrail and why it matters, then links to Broadcom and Yellow Bricks.</p></div>
         <div class="feature"><div class="feature-icon">${icon('table', 17)}</div><h3>Every metric remains visible</h3><p>Search all counters, chart any signal, read every sample or export the analysis and raw series to CSV.</p></div>
+        <div class="feature"><div class="feature-icon">${icon('file', 17)}</div><h3>HTML and PDF reports</h3><p>Export a standalone HTML report or print to PDF with the executive summary, a prioritized action plan, findings and a technical reference.</p></div>
       </div>
 
       <div class="section-head"><div><div class="eyebrow">Source material</div><h2>Ground truth</h2></div><p>The analysis follows the official esxtop counter semantics, with field thresholds labelled as operational guidance.</p></div>
@@ -933,6 +909,32 @@ export async function renderOverview(ctx) {
   };
 }
 
+export function renderReport(ctx) {
+  const doc = ctx.doc;
+  return {
+    html: `
+      <div class="page-head">
+        <div class="eyebrow">Export · capture report</div>
+        <h1>Capture report</h1>
+        <p class="page-lede">A standalone report with the executive summary, a prioritized “What to do next” action plan, every finding, a technical reference and the real VM table. The HTML file opens without the app; the PDF button opens the browser print dialog.</p>
+        <div class="summary-actions report-toolbar">
+          <button class="btn btn-primary" type="button" id="report-html">${icon('download', 15)} Export HTML</button>
+          <button class="btn" type="button" id="report-pdf">${icon('file', 15)} Export PDF</button>
+          <a class="btn btn-ghost" href="#/">${icon('back', 14)} Back to overview</a>
+        </div>
+        <div class="callout mt-1"><strong>PDF export:</strong> the browser print dialog opens. Choose <b>Save as PDF</b> (or “Print to PDF”) and keep the default A4 page size.</div>
+      </div>
+      ${captureTabs(doc, 'report')}
+      <style>${reportStyles()}</style>
+      ${reportBody(doc)}
+    `,
+    mount(root) {
+      root.querySelector('#report-html')?.addEventListener('click', () => downloadReportHTML(doc, ctx.toast));
+      root.querySelector('#report-pdf')?.addEventListener('click', () => openReportPrintWindow(doc, ctx.toast));
+    },
+  };
+}
+
 export async function renderCategory(ctx, category) {
   const doc = ctx.doc;
   const meta = CATEGORY_META[category] || CATEGORY_META.other;
@@ -990,6 +992,7 @@ export async function renderCategory(ctx, category) {
   }
 
   await loadSeriesForPage(ctx, specs);
+  const relations = relationshipsFor(category);
 
   return {
     html: `
@@ -1003,6 +1006,7 @@ export async function renderCategory(ctx, category) {
       ${specs.length ? chartCardsHtml(specs) : ''}
       ${primaryTable}
       ${secondary}
+      ${relations.length ? `<div class="section-head"><div><div class="eyebrow">Technical context</div><h2>How these counters fit together</h2></div><p>Use these relationships before treating a single counter as the root cause.</p></div><div class="grid-2">${relations.map((item) => `<div class="card flat"><h3>${esc(item.title)}</h3><p class="muted">${esc(item.detail)}</p></div>`).join('')}</div>` : ''}
       <div class="callout mt-2"><strong>Threshold caveat:</strong> ${esc(meta.description)} The values in this view are percentiles computed over the whole capture. Use the time-series hover and the raw series page to judge whether a spike is sustained.</div>
     `,
     mount(root) {
@@ -1021,7 +1025,7 @@ export function renderVms(ctx) {
       <div class="page-head">
         <div class="eyebrow">Virtual machines</div>
         <h1>Worlds and pressure</h1>
-        <p class="page-lede">A VM is a group of worlds. The group view is useful for totals, but CPU ready and swap wait must be read per vCPU when a VM is reported slow. Click any VM to open the full drilldown.</p>
+        <p class="page-lede">A VM is a group of worlds. The group view is useful for totals, but CPU ready and swap wait must be read per vCPU when a VM is reported slow. Internal ESXi system worlds such as <code>system1</code> and <code>hostd.20994601</code> are excluded from this table and from VM-scoped findings; their raw series remain searchable.</p>
         <div class="summary-status-row">${statusBadge(critical ? 'critical' : warning ? 'warn' : 'ok')} <span class="dim">${summaries.length} VMs · ${critical} critical · ${warning} warning</span></div>
       </div>
       ${captureTabs(doc, 'vms')}
@@ -1098,6 +1102,9 @@ export async function renderVm(ctx, vmName) {
   const drops = vm.list.filter((series) => ['%DRPTX', '%DRPRX'].includes(series.metric));
   if (drops.length) specs.push(chartSpec('chart-vm-network', 'Network drops', 'Transmit and receive drop percentages on the VM network port.', drops, doc, { yUnit: '%', label: (series) => series.metric === '%DRPTX' ? 'TX drops' : 'RX drops' }));
   const findings = (doc.findings || []).filter((finding) => finding.entity === vm.name);
+  const vmTechnical = ['%RDY', '%MLMTD', '%CSTP', 'MCTLSZ', 'SWCUR', 'GAVG/cmd']
+    .map((metric) => ({ metric, ...technicalFor(metric) }))
+    .filter((item) => item.name);
   const tableRows = vm.list.slice(0, 200);
   await loadSeriesForPage(ctx, specs, [vm.ready, vm.mlmtd, vm.balloon, vm.swap, vm.disk].map((series) => series?.id));
   return {
@@ -1123,6 +1130,8 @@ export async function renderVm(ctx, vmName) {
       ${findings.length ? `<div class="findings">${findings.map((finding) => findingCard(finding)).join('')}</div>` : emptyState('No threshold findings for this VM', 'Inspect the raw counters below. A neutral metric can still be important if it is outside the rule set.')}
       <div class="section-head"><div><div class="eyebrow">Worlds</div><h2>Per-vCPU detail</h2></div></div>
       ${vmVcpuTable(doc, vm.name)}
+      <div class="section-head"><div><div class="eyebrow">Technical vocabulary</div><h2>What these VM counters mean</h2></div></div>
+      <div class="grid-2">${vmTechnical.map((item) => `<div class="card flat"><div class="card-kicker">${esc(item.metric)}</div><h3>${esc(item.name)}</h3><p class="muted">${item.what}</p><p class="muted">${item.read}</p></div>`).join('')}</div>
       <div class="section-head"><div><div class="eyebrow">Raw signals</div><h2>All metrics for ${esc(vm.name)}</h2></div><div class="section-actions"><a class="btn" href="#/metrics?q=${encodeURIComponent(vm.name)}">${icon('search', 14)} Search this VM</a></div></div>
       <div class="table-wrap"><table class="data"><thead><tr><th>Signal</th><th>Group / instance</th><th class="num">Avg</th><th class="num">P95</th><th class="num">Peak</th><th>Status</th></tr></thead><tbody>
         ${tableRows.map((series) => `<tr><td class="name"><a href="${escapeAttr(seriesRoute(series.id))}">${esc(metricName(doc, series))}</a><span class="sub">${esc(series.metric)}</span></td><td>${esc(series.group)}${series.instance ? `<span class="sub">${esc(series.instance)}</span>` : ''}</td><td class="num">${formatMetric(series.stats?.avg, series.unit)}</td><td class="num">${formatMetric(series.stats?.p95, series.unit)}</td><td class="num">${formatMetric(series.stats?.max, series.unit)}</td><td>${statusBadge(series.status)}</td></tr>`).join('')}
@@ -1151,6 +1160,7 @@ export function renderInsights(ctx) {
         <div class="summary-status-row">${statusBadge(doc.summary.status)} <span class="dim">${critical.length} critical · ${warning.length} warning · ${info.length} informational</span></div>
       </div>
       ${captureTabs(doc, 'insights')}
+      <div class="callout accent"><strong>Support workflow:</strong> work critical findings first, confirm each one against the raw series, identify the layer (CPU, memory, storage or network), then change one thing and re-capture. The <a href="#/report">report</a> includes a prioritized “What to do next” plan and the technical reference for every counter behind the findings.</div>
       <div class="table-toolbar">
         <div class="filters" id="finding-filters">
           <button class="filter-btn active" type="button" data-severity-filter="all">All <span class="dim">${findings.length}</span></button>
@@ -1318,6 +1328,8 @@ export async function renderMetric(ctx, metricId) {
     area: chartList.length === 1,
   })] : [];
   const references = definition?.references || [];
+  const tech = technicalFor(metricId);
+  const relations = relationshipsFor(tech?.category || definition?.category || '');
   await loadSeriesForPage(ctx, specs);
   return {
     html: `
@@ -1339,7 +1351,15 @@ export async function renderMetric(ctx, metricId) {
         <aside class="metric-side">
           <div class="card-kicker">Interpretation</div>
           <p class="muted">${esc(definition?.thresholdNote || 'No curated threshold is attached to this metric. Use it as context with the surrounding counters.')}</p>
-          ${definition?.description ? `<p class="muted">${esc(definition.description)}</p>` : ''}
+          ${!tech && definition?.description ? `<p class="muted">${esc(definition.description)}</p>` : ''}
+          ${tech ? `<div class="metric-technical">
+            <div class="card-kicker">Technical detail</div>
+            <p>${tech.what}</p>
+            <p>${tech.read}</p>
+            ${tech.formula ? `<p class="mono">${esc(tech.formula)}</p>` : ''}
+            <p><strong>What to check:</strong> ${tech.check}</p>
+            ${relations.length ? `<ul class="tech-list">${relations.map((item) => `<li><strong>${esc(item.title)}:</strong> ${esc(item.detail)}</li>`).join('')}</ul>` : ''}
+          </div>` : ''}
           ${references.length ? `<div class="refs">${references.map((reference) => `<a href="${escapeAttr(reference.url)}" target="_blank" rel="noreferrer">${icon('external', 12)} ${esc(reference.title)}</a>`).join('')}</div>` : ''}
           <div class="mt-1"><a class="btn btn-sm" href="#/metrics">${icon('back', 13)} All metrics</a></div>
         </aside>
@@ -1376,6 +1396,8 @@ export async function renderSeries(ctx, seriesId) {
   const preview = series.values.slice(0, 400);
   const valueRows = preview.map((value, index) => `<tr><td class="num">${esc(doc.time.labels?.[index] || `#${index + 1}`)}</td><td class="num">${esc(series.kind === 'numeric' ? formatMetric(value, series.unit) : (value ?? '—'))}</td></tr>`).join('');
   const references = definition?.references || [];
+  const tech = technicalFor(series.metric);
+  const relations = relationshipsFor(tech?.category || definition?.category || '');
   return {
     html: `
       <div class="page-head">
@@ -1405,6 +1427,14 @@ export async function renderSeries(ctx, seriesId) {
           <div class="card-kicker">Definition</div>
           <p class="muted">${esc(definition?.description || 'Raw esxtop counter. No curated description is available yet.')}</p>
           ${definition?.thresholdNote ? `<p class="muted">${esc(definition.thresholdNote)}</p>` : ''}
+          ${tech ? `<div class="metric-technical">
+            <div class="card-kicker">Technical detail</div>
+            <p>${tech.what}</p>
+            <p>${tech.read}</p>
+            ${tech.formula ? `<p class="mono">${esc(tech.formula)}</p>` : ''}
+            <p><strong>What to check:</strong> ${tech.check}</p>
+            ${relations.length ? `<ul class="tech-list">${relations.map((item) => `<li><strong>${esc(item.title)}:</strong> ${esc(item.detail)}</li>`).join('')}</ul>` : ''}
+          </div>` : ''}
           <div class="copy-raw">${esc(series.rawHeader)}</div>
           <div class="mt-1"><a class="btn btn-sm" href="${escapeAttr(metricRoute(series.metric))}">${icon('table', 13)} Same metric across entities</a></div>
           <div class="mt-1"><a class="btn btn-sm btn-ghost" href="#/metrics">${icon('back', 13)} All metrics</a></div>

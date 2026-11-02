@@ -149,6 +149,67 @@ class ParserEdgeTests(unittest.TestCase):
         self.assertEqual(disk["metric"], "%USD")
         self.assertEqual(parsed["vms"], ["DB01"])
 
+    def test_system_worlds_are_not_classified_as_vms(self) -> None:
+        header = (
+            '"(PDH-CSV 4.0) (UTC)(0)",'
+            '"\\\\lab\\Vcpu(100:system1:200:vmx-vcpu-0)\\% Ready",'
+            '"\\\\lab\\Vcpu(101:WEB01:201:vmx-vcpu-0)\\% Ready",'
+            '"\\\\lab\\Vcpu(102:hostd.20994601:202:vmx-vcpu-0)\\% Ready",'
+            '"\\\\lab\\Group Cpu(103:hostd.20994601)\\% Used",'
+            '"\\\\lab\\Group Memory(104:python.20979311)\\Numa % Local",'
+            '"\\\\lab\\Group Memory(105:WEB01)\\Numa % Local",'
+            '"\\\\lab\\Group Cpu(106:WEB01)\\% Used"'
+        )
+        values = ("72.7", "12.0", "30.0", "5.0", "0", "40", "20")
+        body = "\n".join(
+            f'"11/02/2026 12:00:0{index}",' + ",".join(f'"{value}"' for value in values)
+            for index in range(3)
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8") as handle:
+            handle.write(f"{header}\n{body}\n")
+            name = handle.name
+        try:
+            parsed = parse_capture(name, "system-worlds.csv")
+            document = build_analysis(parsed)
+        finally:
+            Path(name).unlink(missing_ok=True)
+
+        self.assertEqual(parsed["vms"], ["WEB01"])
+        self.assertEqual(parsed["meta"]["vmCount"], 1)
+
+        def series_with(fragment: str, metric: str) -> dict:
+            return next(
+                item for item in parsed["series"]
+                if fragment in item["instance"] and item["metric"] == metric
+            )
+
+        system_ready = series_with("system1", "%RDY")
+        hostd_ready = series_with("hostd.20994601", "%RDY")
+        python_numa = series_with("python.20979311", "N%L")
+        hostd_cpu = series_with("hostd.20994601", "%USED")
+        web_ready = next(item for item in parsed["series"] if item["vm"] == "WEB01" and item["metric"] == "%RDY")
+
+        for item in (system_ready, hostd_ready, python_numa, hostd_cpu):
+            self.assertEqual(item["scope"], "host")
+            self.assertEqual(item["vm"], "")
+        self.assertEqual(web_ready["scope"], "vm")
+        self.assertEqual(web_ready["vm"], "WEB01")
+
+        ready_entities = {
+            finding["entity"] for finding in document["findings"]
+            if finding["title"] == "vCPU ready time is elevated"
+        }
+        self.assertIn("WEB01", ready_entities)
+        self.assertNotIn("system1", ready_entities)
+        self.assertNotIn("hostd.20994601", ready_entities)
+
+        numa_entities = {
+            finding["entity"] for finding in document["findings"]
+            if finding["title"] == "NUMA locality is poor"
+        }
+        self.assertIn("WEB01", numa_entities)
+        self.assertNotIn("python.20979311", numa_entities)
+
     def test_corrupt_gzip_is_rejected(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".csv.gz", delete=False) as handle:
             handle.write(b"\x1f\x8b" + b"this is not a valid gzip stream")
