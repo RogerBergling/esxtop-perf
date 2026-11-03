@@ -70,7 +70,9 @@ const REPORT_CSS = `
 .capture-report .report-table-wrap { width: 100%; max-width: 100%; overflow-x: auto; margin: .5rem 0 1rem; }
 .capture-report .report-table-wrap .report-table { margin: 0; }
 .capture-report .report-metric-id { display: block; color: var(--rp-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .64rem; margin-top: .1rem; overflow-wrap: anywhere; }
-.capture-report .report-appendix-section { margin-top: 1.1rem; }
+.capture-report .report-appendix-entity { margin-top: 1.1rem; break-inside: avoid; }
+.capture-report .report-appendix-entity h3 { display: flex; flex-wrap: wrap; gap: .35rem .6rem; align-items: baseline; }
+.capture-report .report-appendix-entity h3 .report-note { margin: 0; font-weight: 400; }
 .capture-report .report-appendix-table { font-size: .68rem; }
 .capture-report .report-appendix-table th, .capture-report .report-appendix-table td { padding: .34rem .35rem; }
 .capture-report .report-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; margin: .5rem 0 1rem; }
@@ -212,7 +214,7 @@ function reportFindings(findings) {
   }).join('');
 }
 
-function reportActions(findings) {
+function reportActions(findings, categories = new Set(REPORT_CATEGORIES)) {
   const priority = { critical: 'P1', warning: 'P2', info: 'P3' };
   const groups = [
     ['critical', 'Critical actions'],
@@ -235,18 +237,18 @@ function reportActions(findings) {
   }).join('');
 
   const decisionRows = [
-    ['%RDY high, %MLMTD > 0', 'The VM or resource pool has a CPU limit. Remove or raise the limit before adding hardware.'],
-    ['%RDY high, %MLMTD = 0', 'Host scheduling contention. Reduce vCPUs, move the VM, or add CPU capacity.'],
-    ['%CSTP high', 'SMP co-scheduling pressure. Review vCPU count and guest workload balance.'],
-    ['%SWPWT / SWCUR / MCTLSZ high', 'Memory pressure or a limit. Check host free memory, reservations and VM limits.'],
-    ['N%L low', 'NUMA locality. Resize the VM to fit a node or let vSphere place it correctly.'],
-    ['KAVG high', 'VMkernel/vSCSI delay. Check queue depth, paths, vSCSI and host CPU pressure.'],
-    ['DAVG high', 'Device/array delay. Check the array, SAN fabric, HBA and path health.'],
-    ['GAVG high', 'Split it: GAVG = DAVG + KAVG. Fix the layer that dominates.'],
-    ['QUED / %USD high', 'Queue saturation. Check DQLEN/AQLEN and whether the backend can absorb more depth.'],
-    ['ABRTS/s, RESETS/s or CONS/s', 'Hard storage-path errors or reservation conflicts. Treat as an incident before tuning.'],
-    ['%DRPTX / %DRPRX', 'Network drops. Check the uplink, physical switch, teaming and traffic shaping.'],
-  ];
+    ['%RDY high, %MLMTD > 0', 'The VM or resource pool has a CPU limit. Remove or raise the limit before adding hardware.', 'cpu'],
+    ['%RDY high, %MLMTD = 0', 'Host scheduling contention. Reduce vCPUs, move the VM, or add CPU capacity.', 'cpu'],
+    ['%CSTP high', 'SMP co-scheduling pressure. Review vCPU count and guest workload balance.', 'cpu'],
+    ['%SWPWT / SWCUR / MCTLSZ high', 'Memory pressure or a limit. Check host free memory, reservations and VM limits.', 'memory'],
+    ['N%L low', 'NUMA locality. Resize the VM to fit a node or let vSphere place it correctly.', 'memory'],
+    ['KAVG high', 'VMkernel/vSCSI delay. Check queue depth, paths, vSCSI and host CPU pressure.', 'storage'],
+    ['DAVG high', 'Device/array delay. Check the array, SAN fabric, HBA and path health.', 'storage'],
+    ['GAVG high', 'Split it: GAVG = DAVG + KAVG. Fix the layer that dominates.', 'storage'],
+    ['QUED / %USD high', 'Queue saturation. Check DQLEN/AQLEN and whether the backend can absorb more depth.', 'storage'],
+    ['ABRTS/s, RESETS/s or CONS/s', 'Hard storage-path errors or reservation conflicts. Treat as an incident before tuning.', 'storage'],
+    ['%DRPTX / %DRPRX', 'Network drops. Check the uplink, physical switch, teaming and traffic shaping.', 'network'],
+  ].filter((row) => categories.has(row[2]));
 
   return `<div class="report-action-intro">
       <h3>Before you change anything</h3>
@@ -272,13 +274,14 @@ function reportActions(findings) {
     </ul>`;
 }
 
-function reportTechnical(findings) {
+function reportTechnical(findings, categories = new Set(REPORT_CATEGORIES)) {
   const relevant = new Set(findings.map((finding) => finding.metric));
-  const categoryOrder = ['cpu', 'memory', 'storage', 'network'];
+  const categoryOrder = ['cpu', 'memory', 'storage', 'network'].filter((category) => categories.has(category));
   const relationships = Object.entries(TECHNICAL_RELATIONSHIPS)
+    .filter(([category]) => categories.has(category))
     .map(([category, items]) => `<h3>${esc(categoryLabel(category))}</h3><ul class="report-list">${items.map((item) => `<li><strong>${esc(item.title)}:</strong> ${esc(item.detail)}</li>`).join('')}</ul>`)
     .join('');
-  const categories = categoryOrder.map((category) => {
+  const categorySections = categoryOrder.map((category) => {
     const entries = technicalEntries(category)
       .sort((left, right) => Number(relevant.has(right.metric)) - Number(relevant.has(left.metric)) || left.metric.localeCompare(right.metric));
     if (!entries.length) return '';
@@ -299,7 +302,7 @@ function reportTechnical(findings) {
   }).join('');
   return `<p class="report-note">This reference covers the counters used by the rules; a capture may not contain every metric. Definitions follow the Broadcom/VMware counter semantics and the field guide's operational guidance.</p>
     <div class="report-relations"><h3>Key relationships</h3>${relationships}</div>
-    ${categories}`;
+    ${categorySections}`;
 }
 
 function reportEntityCard({ title, subtitle, status, metrics }) {
@@ -362,7 +365,7 @@ function hostStorageValue(row, metric, field = 'p95') {
   return row?.series?.[metric]?.stats?.[field] ?? null;
 }
 
-function reportHost(doc, host) {
+function reportHost(doc, host, categories) {
   const cpuTotal = reportHostPick(doc, host, 'PCPU %', (series) => series.instance === '_Total')
     || reportHostPick(doc, host, 'PCPU_UTIL', (series) => series.instance === '_Total')
     || reportHostPick(doc, host, 'PCPU %')
@@ -385,22 +388,23 @@ function reportHost(doc, host) {
   ].filter(Boolean).sort((left, right) => (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0))[0] || null;
   const freePct = free?.stats?.last && machine?.stats?.last ? (free.stats.last / machine.stats.last) * 100 : null;
   const rows = [
-    ['Physical CPU total P95', cpuTotal ? formatMetric(cpuTotal.stats?.p95, '%') : '—', cpuTotal?.status || 'neutral'],
-    ['Busiest physical core P95', cpuCore ? formatMetric(cpuCore.stats?.p95, '%') : '—', cpuCore?.status || 'neutral'],
-    ['CPU load 1m P95', formatMetric(load?.stats?.p95, ''), load?.status || 'neutral'],
-    ['Free memory last', free ? `${formatMetric(free.stats?.last, 'MB')}${freePct !== null ? ` (${formatNumber(freePct, 1)}% of machine)` : ''}` : '—', free?.status || 'neutral'],
-    ['Memory overcommit P95', formatMetric(overcommit?.stats?.p95, ''), overcommit?.status || 'neutral'],
-    ['Host balloon P95', formatMetric(balloon?.stats?.p95, 'MB'), balloon?.status || 'neutral'],
-    ['Host swap used P95', formatMetric(swap?.stats?.p95, 'MB'), swap?.status || 'neutral'],
-    ['Host swap I/O P95', `${formatMetric(swapIn?.stats?.p95, 'MB/s')} read / ${formatMetric(swapOut?.stats?.p95, 'MB/s')} write`, worstStatus([swapIn?.status, swapOut?.status].filter(Boolean))],
-    ['Host storage GAVG P95', formatMetric(gavg?.stats?.p95, 'ms'), gavg?.status || 'neutral'],
-    ['Host storage QUED P95', formatMetric(qued?.stats?.p95, ''), qued?.status || 'neutral'],
-    ['Host network drops P95', drops ? formatMetric(drops.stats?.p95, '%') : '—', drops?.status || 'neutral'],
+    ['Physical CPU total P95', cpuTotal ? formatMetric(cpuTotal.stats?.p95, '%') : '—', cpuTotal?.status || 'neutral', 'cpu'],
+    ['Busiest physical core P95', cpuCore ? formatMetric(cpuCore.stats?.p95, '%') : '—', cpuCore?.status || 'neutral', 'cpu'],
+    ['CPU load 1m P95', formatMetric(load?.stats?.p95, ''), load?.status || 'neutral', 'cpu'],
+    ['Free memory last', free ? `${formatMetric(free.stats?.last, 'MB')}${freePct !== null ? ` (${formatNumber(freePct, 1)}% of machine)` : ''}` : '—', free?.status || 'neutral', 'memory'],
+    ['Memory overcommit P95', formatMetric(overcommit?.stats?.p95, ''), overcommit?.status || 'neutral', 'memory'],
+    ['Host balloon P95', formatMetric(balloon?.stats?.p95, 'MB'), balloon?.status || 'neutral', 'memory'],
+    ['Host swap used P95', formatMetric(swap?.stats?.p95, 'MB'), swap?.status || 'neutral', 'memory'],
+    ['Host swap I/O P95', `${formatMetric(swapIn?.stats?.p95, 'MB/s')} read / ${formatMetric(swapOut?.stats?.p95, 'MB/s')} write`, worstStatus([swapIn?.status, swapOut?.status].filter(Boolean)), 'memory'],
+    ['Host storage GAVG P95', formatMetric(gavg?.stats?.p95, 'ms'), gavg?.status || 'neutral', 'storage'],
+    ['Host storage QUED P95', formatMetric(qued?.stats?.p95, ''), qued?.status || 'neutral', 'storage'],
+    ['Host network drops P95', drops ? formatMetric(drops.stats?.p95, '%') : '—', drops?.status || 'neutral', 'network'],
   ];
-  const storageRows = reportHostStorageRows(doc, host);
+  const visibleRows = rows.filter((row) => categories.has(row[3]));
+  const storageRows = categories.has('storage') ? reportHostStorageRows(doc, host) : [];
   const hostTable = `<table class="report-table report-host-table">
     <thead><tr><th>Host signal</th><th class="num">Value</th><th>Status</th></tr></thead>
-    <tbody>${rows.map(([label, value, status]) => `<tr><td>${esc(label)}</td><td class="num">${esc(value)}</td><td>${badgeFor(status)}</td></tr>`).join('')}</tbody>
+    <tbody>${visibleRows.map(([label, value, status]) => `<tr><td>${esc(label)}</td><td class="num">${esc(value)}</td><td>${badgeFor(status)}</td></tr>`).join('') || '<tr><td colspan="3">No host signals in the selected categories.</td></tr>'}</tbody>
   </table>`;
   const storageCards = storageRows.length ? `<h3>Host disk adapters and devices</h3>
     <p class="report-note">All host-scope storage entities in the capture, sorted by GAVG P95. Latency and queue values are P95; abort/reset values are capture maxima. <code>—</code> means the counter was not captured.</p>
@@ -426,9 +430,42 @@ function reportHost(doc, host) {
         ],
       })).join('')}
     </div>` : '';
-  return `<p class="report-note">Scope: <strong>${esc(host || 'capture host')}</strong>. Host counters are P95 over the capture window unless marked “last”. Latency is split into GAVG, DAVG and KAVG; the host storage cards below include every host-scope adapter/device captured for this host.</p>
+  const storageNote = categories.has('storage')
+    ? ' Latency is split into GAVG, DAVG and KAVG; the host storage cards below include every host-scope adapter/device captured for this host.'
+    : '';
+  return `<p class="report-note">Scope: <strong>${esc(host || 'capture host')}</strong>. Host counters are P95 over the capture window unless marked “last”.${storageNote}</p>
     ${hostTable}
     ${storageCards}`;
+}
+
+export const REPORT_CATEGORIES = ['cpu', 'memory', 'storage', 'network', 'power', 'other'];
+
+export function reportCategorySet(scope = {}) {
+  const selected = Array.isArray(scope.categories) && scope.categories.length
+    ? scope.categories.filter((category) => REPORT_CATEGORIES.includes(category))
+    : [...REPORT_CATEGORIES];
+  return new Set(selected.length ? selected : REPORT_CATEGORIES);
+}
+
+function filteredReportSummary(doc, categories) {
+  const selectedSeries = (doc.series || []).filter((series) => categories.has(series.category));
+  const selectedFindings = (doc.findings || []).filter((finding) => categories.has(finding.category));
+  const counts = { ok: 0, warn: 0, critical: 0, neutral: 0, info: 0 };
+  for (const series of selectedSeries) counts[series.status || 'neutral'] += 1;
+  const evaluated = counts.ok + counts.warn + counts.critical;
+  const critical = selectedFindings.filter((finding) => finding.severity === 'critical').length;
+  const warning = selectedFindings.filter((finding) => finding.severity === 'warning').length;
+  const info = selectedFindings.filter((finding) => finding.severity === 'info').length;
+  const status = critical ? 'critical' : warning ? 'warn' : evaluated ? 'ok' : 'neutral';
+  const score = evaluated ? Math.round((counts.ok / evaluated) * 100) : null;
+  const headline = critical
+    ? `${critical} critical finding${critical === 1 ? '' : 's'} in the selected categories`
+    : warning
+      ? `${warning} warning${warning === 1 ? '' : 's'} in the selected categories`
+      : evaluated
+        ? 'No threshold breaches in the selected categories'
+        : 'No rule-evaluated series in the selected categories';
+  return { counts, evaluated, critical, warning, info, status, score, headline, selectedFindings };
 }
 
 export function reportHostNames(doc) {
@@ -451,31 +488,46 @@ function reportScopedVmNames(doc, host, selectedVms = []) {
   return names.filter((name) => selected.has(name));
 }
 
-function reportVms(doc, host = null, selectedVms = []) {
+function reportVms(doc, host = null, selectedVms = [], categories = new Set(REPORT_CATEGORIES)) {
   const names = reportScopedVmNames(doc, host, selectedVms);
   if (!names.length) {
     return '<div class="report-empty">No VM groups were detected for the selected host and scope. ESXi system worlds are excluded from this table.</div>';
   }
+  const showCpu = categories.has('cpu');
+  const showMemory = categories.has('memory');
+  const showStorage = categories.has('storage');
+  const headers = [
+    '<th>Virtual machine</th>',
+    ...(showCpu ? ['<th class="num">vCPU</th>', '<th class="num">CPU P95</th>', '<th class="num">%RDY P95</th>', '<th class="num">%MLMTD P95</th>', '<th class="num">%CSTP P95</th>'] : []),
+    ...(showMemory ? ['<th class="num">Memory</th>', '<th class="num">Balloon P95</th>', '<th class="num">Swap P95</th>'] : []),
+    ...(showStorage ? ['<th class="num">GAVG P95</th>'] : []),
+    '<th>Status</th>',
+  ];
   const rows = names.map((name) => {
-    const vm = vmSummary(doc, name, host);
+    const vm = vmSummary(doc, name, host, categories);
     const status = worstStatus([vm.status, ...vm.findings.map((finding) => finding.severity)]);
-    return `<tr>
-      <td><strong>${esc(vm.name)}</strong></td>
-      <td class="num">${vm.vcpus ?? '—'}</td>
-      <td class="num">${vm.configuredMemory !== null ? formatMetric(vm.configuredMemory, 'MB') : '—'}</td>
-      <td class="num">${formatMetric(vm.cpuUsed?.stats?.p95, '%')}</td>
-      <td class="num">${formatMetric(vm.ready?.stats?.p95, '%')}</td>
-      <td class="num">${formatMetric(vm.mlmtd?.stats?.p95, '%')}</td>
-      <td class="num">${formatMetric(vm.cstop?.stats?.p95, '%')}</td>
-      <td class="num">${formatMetric(vm.balloon?.stats?.p95, 'MB')}</td>
-      <td class="num">${formatMetric(vm.swap?.stats?.p95, 'MB')}</td>
-      <td class="num">${formatMetric(vm.disk?.stats?.p95, 'ms')}</td>
-      <td>${badgeFor(status)}</td>
-    </tr>`;
+    const cells = [
+      `<td><strong>${esc(vm.name)}</strong></td>`,
+      ...(showCpu ? [
+        `<td class="num">${vm.vcpus ?? '—'}</td>`,
+        `<td class="num">${formatMetric(vm.cpuUsed?.stats?.p95, '%')}</td>`,
+        `<td class="num">${formatMetric(vm.ready?.stats?.p95, '%')}</td>`,
+        `<td class="num">${formatMetric(vm.mlmtd?.stats?.p95, '%')}</td>`,
+        `<td class="num">${formatMetric(vm.cstop?.stats?.p95, '%')}</td>`,
+      ] : []),
+      ...(showMemory ? [
+        `<td class="num">${vm.configuredMemory !== null ? formatMetric(vm.configuredMemory, 'MB') : '—'}</td>`,
+        `<td class="num">${formatMetric(vm.balloon?.stats?.p95, 'MB')}</td>`,
+        `<td class="num">${formatMetric(vm.swap?.stats?.p95, 'MB')}</td>`,
+      ] : []),
+      ...(showStorage ? [`<td class="num">${formatMetric(vm.disk?.stats?.p95, 'ms')}</td>`] : []),
+      `<td>${badgeFor(status)}</td>`,
+    ];
+    return `<tr>${cells.join('')}</tr>`;
   }).join('');
-  return `<p class="report-note">Only VM groups are listed. ESXi system worlds such as <code>system1</code>, <code>hostd.20994601</code> and <code>python.20979311</code> are excluded from this table and from VM-scoped findings.</p>
+  return `<p class="report-note">One row per VM. ESXi system worlds such as <code>system1</code>, <code>hostd.20994601</code> and <code>python.20979311</code> are excluded from this table and from VM-scoped findings.</p>
     <div class="report-table-wrap"><table class="report-table">
-      <thead><tr><th>Virtual machine</th><th class="num">vCPU</th><th class="num">Memory</th><th class="num">CPU P95</th><th class="num">%RDY P95</th><th class="num">%MLMTD P95</th><th class="num">%CSTP P95</th><th class="num">Balloon P95</th><th class="num">Swap P95</th><th class="num">GAVG P95</th><th>Status</th></tr></thead>
+      <thead><tr>${headers.join('')}</tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
 }
@@ -515,12 +567,13 @@ function diskStatus(row) {
   return worstStatus(Object.values(row.series).map((series) => series.status));
 }
 
-function reportVmStorage(doc, host = null, selectedVms = []) {
+function reportVmStorage(doc, host = null, selectedVms = [], categories = new Set(REPORT_CATEGORIES)) {
+  if (!categories.has('storage')) return '';
   const names = reportScopedVmNames(doc, host, selectedVms);
   const summaryRows = [];
   const diskCards = [];
   for (const name of names) {
-    const vm = vmSummary(doc, name, host);
+    const vm = vmSummary(doc, name, host, categories);
     const rows = diskRowsForVm(vm);
     if (!rows.length) continue;
     const worst = [...rows].sort((left, right) => (
@@ -567,7 +620,7 @@ function reportVmStorage(doc, host = null, selectedVms = []) {
     return '<div class="report-empty">No Virtual Disk counters were captured for the detected VMs.</div>';
   }
   return `<h3>VM storage detail</h3>
-    <p class="report-note">P95 over the capture window. The quick-scan table selects the virtual disk with the highest GAVG (then highest IOPS) per VM. The cards below show every captured virtual disk and all storage latency, queue, throughput and error values. <code>—</code> means the counter was not captured.</p>
+    <p class="report-note">P95 over the capture window. The quick-scan table has one row per VM; the cards below have one card per virtual disk, so a VM with multiple disks appears once per disk. That is disk-level detail, not a duplicate VM record. <code>—</code> means the counter was not captured.</p>
     <h4>Quick scan: worst virtual disk per VM</h4>
     <div class="report-table-wrap"><table class="report-table">
       <thead><tr><th>Virtual machine</th><th class="num">vDisks</th><th class="num">IOPS</th><th class="num">MB Read/s</th><th class="num">MB Write/s</th><th class="num">GAVG</th><th class="num">DAVG</th><th class="num">KAVG</th><th>Status</th></tr></thead>
@@ -577,16 +630,17 @@ function reportVmStorage(doc, host = null, selectedVms = []) {
     <div class="report-card-grid">${diskCards.join('')}</div>`;
 }
 
-function reportVmMemoryNetwork(doc, host = null, selectedVms = []) {
+function reportVmMemoryNetwork(doc, host = null, selectedVms = [], categories = new Set(REPORT_CATEGORIES)) {
+  const showMemory = categories.has('memory');
+  const showNetwork = categories.has('network');
+  if (!showMemory && !showNetwork) return '';
   const names = reportScopedVmNames(doc, host, selectedVms);
   if (!names.length) return '<div class="report-empty">No VM groups were detected for the selected host and scope.</div>';
   const cards = names.map((name) => {
-    const vm = vmSummary(doc, name, host);
-    return reportEntityCard({
-      title: name,
-      subtitle: `${vm.vcpus ?? '—'} vCPU · ${formatMetric(vm.configuredMemory, 'MB')} configured`,
-      status: vm.status,
-      metrics: [
+    const vm = vmSummary(doc, name, host, categories);
+    const metrics = [];
+    if (showMemory) {
+      metrics.push(
         ['Memory size', formatMetric(vm.configuredMemory, 'MB')],
         ['Granted', formatMetric(vm.grantedMemory, 'MB')],
         ['Balloon', formatMetric(vm.balloon?.stats?.p95, 'MB')],
@@ -595,41 +649,88 @@ function reportVmMemoryNetwork(doc, host = null, selectedVms = []) {
         ['Swap out', formatMetric(vm.swapOut?.stats?.p95, 'MB/s')],
         ['Swap wait', formatMetric(vm.swapWait?.stats?.p95, '%')],
         ['N%L P05', formatMetric(vm.numa?.stats?.p05, '%')],
+      );
+    }
+    if (showNetwork) {
+      metrics.push(
         ['TX drop', formatMetric(vm.txDrop?.stats?.p95, '%')],
         ['RX drop', formatMetric(vm.rxDrop?.stats?.p95, '%')],
         ['TX Mbps', formatMetric(vm.mbTx?.stats?.p95, 'Mbps')],
         ['RX Mbps', formatMetric(vm.mbRx?.stats?.p95, 'Mbps')],
-      ],
+      );
+    }
+    return reportEntityCard({
+      title: name,
+      subtitle: `${vm.vcpus ?? '—'} vCPU · ${formatMetric(vm.configuredMemory, 'MB')} configured`,
+      status: vm.status,
+      metrics,
     });
   }).join('');
-  return `<h3>VM memory and network detail</h3>
-    <p class="report-note">P95 for reclaim and network values; <code>N%L</code> shows P05 because lower locality is worse. <code>Swap wait</code> is the vCPU swap-wait percentage. <code>—</code> means the counter was not captured.</p>
-    <div class="report-card-grid">${cards}</div>`;
+  const title = showMemory && showNetwork ? 'VM memory and network detail' : showMemory ? 'VM memory detail' : 'VM network detail';
+  const note = showMemory
+    ? 'P95 for reclaim values; N%L shows P05 because lower locality is worse. Swap wait is the vCPU swap-wait percentage. — means the counter was not captured.'
+    : 'P95 for network values. — means the counter was not captured.';
+  return `<h3>${title}</h3><p class="report-note">${esc(note)}</p><div class="report-card-grid">${cards}</div>`;
 }
 
-function reportMetricAppendix(doc) {
-  const series = (doc.series || []).filter((item) => item.stats);
-  const order = ['cpu', 'memory', 'storage', 'network', 'power', 'other'];
-  const sections = order.map((category) => {
-    const items = series
-      .filter((item) => item.category === category)
-      .sort((left, right) => (
-        String(left.group).localeCompare(String(right.group)) ||
-        String(left.metricName || left.metric).localeCompare(String(right.metricName || right.metric)) ||
-        String(left.instance || left.entity || '').localeCompare(String(right.instance || right.entity || ''))
-      ));
-    if (!items.length) return '';
-    return `<div class="report-appendix-section">
-      <h3>${esc(categoryLabel(category))} <span class="report-note">(${items.length} series)</span></h3>
+function reportMetricAppendix(doc, selectedCategories = new Set(REPORT_CATEGORIES)) {
+  const series = (doc.series || []).filter((item) => item.stats && selectedCategories.has(item.category));
+  const groups = new Map();
+  for (const item of series) {
+    let key;
+    let label;
+    let meta;
+    let order;
+    if (item.scope === 'vm' && item.vm) {
+      key = `vm|${item.host}|${item.vm}`;
+      label = item.vm;
+      meta = `VM · ${item.host}`;
+      order = 0;
+    } else if (item.category === 'storage' && item.instance) {
+      key = `storage|${item.host}|${item.group}|${item.instance}`;
+      label = item.instance;
+      meta = `${item.group} · ${item.host}`;
+      order = 2;
+    } else if (item.scope === 'host') {
+      key = `host|${item.host}`;
+      label = item.host || 'ESXi host';
+      meta = 'Host and system metrics';
+      order = 1;
+    } else {
+      key = `other|${item.host}|${item.group}|${item.entity}`;
+      label = item.entity || item.group || 'Other';
+      meta = `${item.group} · ${item.host}`;
+      order = 3;
+    }
+    let group = groups.get(key);
+    if (!group) {
+      group = { key, label, meta, order, items: [] };
+      groups.set(key, group);
+    }
+    group.items.push(item);
+  }
+  const sorted = [...groups.values()].sort((left, right) => (
+    left.order - right.order ||
+    left.label.localeCompare(right.label) ||
+    left.meta.localeCompare(right.meta)
+  ));
+  const sections = sorted.map((group) => {
+    const items = group.items.sort((left, right) => (
+      String(left.category).localeCompare(String(right.category)) ||
+      String(left.metricName || left.metric).localeCompare(String(right.metricName || right.metric)) ||
+      String(left.group).localeCompare(String(right.group)) ||
+      String(left.instance || '').localeCompare(String(right.instance || ''))
+    ));
+    return `<section class="report-appendix-entity">
+      <h3>${esc(group.label)} <span class="report-note">${esc(group.meta)} · ${items.length} metrics</span></h3>
       <div class="report-table-wrap"><table class="report-table report-appendix-table">
-        <thead><tr><th>Metric</th><th>Entity</th><th class="num">Min</th><th class="num">Avg</th><th class="num">P95</th><th class="num">Max</th><th class="num">Last</th><th>Status</th></tr></thead>
+        <thead><tr><th>Category</th><th>Metric</th><th class="num">Min</th><th class="num">Avg</th><th class="num">P95</th><th class="num">Max</th><th class="num">Last</th><th>Status</th></tr></thead>
         <tbody>${items.map((item) => {
           const definition = doc.metrics?.[item.metric] || {};
           const name = definition.name || item.metricName || item.metric;
-          const entity = item.instance || item.entity || item.group || '—';
           return `<tr>
-            <td><strong>${esc(name)}</strong><span class="report-metric-id">${esc(item.metric)}</span></td>
-            <td>${esc(item.group || '—')}${entity && entity !== item.group ? `<span class="report-metric-id">${esc(entity)}</span>` : ''}</td>
+            <td>${esc(categoryLabel(item.category))}</td>
+            <td><strong>${esc(name)}</strong><span class="report-metric-id">${esc(item.metric)} · ${esc(item.group)}${item.instance ? ` · ${esc(item.instance)}` : ''}</span></td>
             <td class="num">${formatMetric(item.stats?.min, item.unit)}</td>
             <td class="num">${formatMetric(item.stats?.avg, item.unit)}</td>
             <td class="num">${formatMetric(item.stats?.p95, item.unit)}</td>
@@ -639,18 +740,17 @@ function reportMetricAppendix(doc) {
           </tr>`;
         }).join('')}</tbody>
       </table></div>
-    </div>`;
+    </section>`;
   }).join('');
-  return `<p class="report-note">Every captured series is included below, including host, VM, storage, network, power and system groups. Values are statistics over the capture window; raw sample arrays are not embedded in the report. Open the metric in ESXtop Lens for the complete time series or use <b>Export all metrics CSV</b>.</p>
-    <p class="report-note"><strong>${formatNumber(series.length, 0)} series.</strong> For very large captures this appendix can be very long.</p>
-    ${sections || '<div class="report-empty">No metric series are available.</div>'}`;
+  return `<p class="report-note">Every captured series is included below. Each VM appears once as an entity heading with all its captured metrics underneath; host and disk entities are grouped the same way. Values are statistics over the capture window; raw sample arrays are not embedded in the report. Open the metric in ESXtop Lens for the complete time series or use <b>Export filtered metrics CSV</b>.</p>
+    <p class="report-note"><strong>${formatNumber(series.length, 0)} series · ${sorted.length} entities.</strong> For very large captures this appendix can be very long.</p>
+    ${sections || '<div class="report-empty">No metric series are available for the selected categories.</div>'}`;
 }
 
-function reportCategories(doc) {
+function reportCategories(doc, selectedCategories = new Set(REPORT_CATEGORIES)) {
   const categories = doc.summary?.categories || {};
-  const order = ['cpu', 'memory', 'storage', 'network', 'power', 'other'];
-  const rows = order
-    .filter((key) => categories[key])
+  const rows = REPORT_CATEGORIES
+    .filter((key) => selectedCategories.has(key) && categories[key])
     .map((key) => {
       const item = categories[key];
       return `<tr>
@@ -713,39 +813,71 @@ function reportMethod(doc) {
 }
 
 export function reportBody(doc, scope = {}) {
-  const summary = doc.summary || {};
-  const findings = doc.findings || [];
   const meta = doc.meta || {};
-  const status = summary.status || 'neutral';
-  const score = summary.score;
-  const critical = summary.critical || 0;
-  const warning = summary.warning || 0;
-  const info = summary.info || 0;
+  const categories = reportCategorySet(scope);
+  const reportSummary = filteredReportSummary(doc, categories);
+  const findings = reportSummary.selectedFindings;
+  const status = reportSummary.status;
+  const score = reportSummary.score;
+  const critical = reportSummary.critical;
+  const warning = reportSummary.warning;
+  const info = reportSummary.info;
   const vms = (doc.vms || []).length;
   const hosts = reportHostNames(doc);
-  const mode = ['all', 'host', 'vm'].includes(scope.mode) ? scope.mode : 'all';
-  const scopeHost = scope.host || meta.host || hosts[0] || '';
-  const scopeVms = scope.vms || [];
-  const detailHosts = mode === 'all' ? (hosts.length ? hosts : [scopeHost]) : [scopeHost].filter(Boolean);
-  const vmScopeLabel = mode === 'all'
-    ? `all ${vms} VMs across ${detailHosts.length} host${detailHosts.length === 1 ? '' : 's'}`
-    : mode === 'host'
-      ? `all VMs on ${scopeHost}`
-      : `${scopeVms.length ? `${scopeVms.length} selected VM${scopeVms.length === 1 ? '' : 's'}` : 'all VMs'} on ${scopeHost}`;
-  const title = mode === 'all' && hosts.length > 1 ? 'All ESXi hosts · capture report' : (scopeHost || 'ESXi host');
+  const requestedMode = scope.mode || 'all';
+  const mode = ['all', 'both', 'hosts', 'vms'].includes(requestedMode)
+    ? requestedMode
+    : requestedMode === 'host' ? 'both' : requestedMode === 'vm' ? 'vms' : 'all';
+  const requestedHosts = (Array.isArray(scope.hosts) && scope.hosts.length
+    ? scope.hosts
+    : (scope.host ? [scope.host] : [])).filter(Boolean);
+  const selectedHosts = (mode === 'all'
+    ? hosts
+    : requestedHosts.length ? requestedHosts : [meta.host || hosts[0] || '']).filter(Boolean);
+  const pageVms = (scope.vms || []).map((item) => {
+    if (typeof item === 'string') return { host: scope.host || meta.host || '', vm: item };
+    if (Array.isArray(item)) return { host: item[0], vm: item[1] };
+    return item;
+  }).filter((item) => item && item.vm);
+  const selectedPairsByHost = new Map();
+  for (const pair of pageVms) {
+    if (!selectedPairsByHost.has(pair.host)) selectedPairsByHost.set(pair.host, []);
+    if (!selectedPairsByHost.get(pair.host).includes(pair.vm)) selectedPairsByHost.get(pair.host).push(pair.vm);
+  }
+  const detailHosts = mode === 'all' ? hosts : mode === 'both' || mode === 'hosts' ? selectedHosts : [];
+  const vmHosts = mode === 'all' ? hosts : mode === 'both' ? selectedHosts : mode === 'vms' ? [...selectedPairsByHost.keys()] : [];
+  const scopeLabel = mode === 'all'
+    ? `all ${hosts.length} host${hosts.length === 1 ? '' : 's'} and all ${vms} VMs`
+    : mode === 'hosts'
+      ? `${selectedHosts.length} selected host${selectedHosts.length === 1 ? '' : 's'}; host detail only`
+      : mode === 'both'
+        ? `${selectedHosts.length} selected host${selectedHosts.length === 1 ? '' : 's'}; ${pageVms.length ? `${pageVms.length} selected VM${pageVms.length === 1 ? '' : 's'}` : 'all VMs on those hosts'}`
+        : `${pageVms.length} selected VM${pageVms.length === 1 ? '' : 's'} across ${selectedPairsByHost.size} host${selectedPairsByHost.size === 1 ? '' : 's'}; VM detail only`;
+  const title = mode === 'all' && hosts.length > 1
+    ? 'All ESXi hosts · capture report'
+    : mode === 'vms'
+      ? 'Selected VMs · capture report'
+      : selectedHosts.length > 1
+        ? `${selectedHosts.length} selected hosts · capture report`
+        : (selectedHosts[0] || meta.host || 'ESXi host');
   const generated = new Date().toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
   const hostSections = detailHosts.map((host) => `<section class="report-section">
       <h2>Host snapshot${detailHosts.length > 1 ? ` · ${esc(host)}` : ''}</h2>
-      ${reportHost(doc, host)}
+      ${reportHost(doc, host, categories)}
     </section>`).join('');
-  const vmSections = detailHosts.map((host) => {
-    const names = mode === 'vm' ? reportScopedVmNames(doc, host, scopeVms) : reportVmNames(doc, host);
+  const vmSections = vmHosts.map((host) => {
+    const selectedNames = selectedPairsByHost.get(host) || [];
+    const names = mode === 'vms'
+      ? reportScopedVmNames(doc, host, selectedNames)
+      : mode === 'both' && selectedNames.length
+        ? reportScopedVmNames(doc, host, selectedNames)
+        : reportVmNames(doc, host);
     if (!names.length) return '';
     return `<section class="report-section">
-      ${detailHosts.length > 1 ? `<h3>Virtual machines · ${esc(host)}</h3>` : ''}
-      ${reportVms(doc, host, mode === 'vm' ? scopeVms : [])}
-      ${reportVmStorage(doc, host, mode === 'vm' ? scopeVms : [])}
-      ${reportVmMemoryNetwork(doc, host, mode === 'vm' ? scopeVms : [])}
+      ${vmHosts.length > 1 ? `<h3>Virtual machines · ${esc(host)}</h3>` : ''}
+      ${reportVms(doc, host, names, categories)}
+      ${reportVmStorage(doc, host, names, categories)}
+      ${reportVmMemoryNetwork(doc, host, names, categories)}
     </section>`;
   }).join('');
   return `<section class="capture-report">
@@ -760,23 +892,23 @@ export function reportBody(doc, scope = {}) {
       ${hosts.length > 1 ? `<span class="report-pill">${hosts.length} hosts</span>` : ''}
       <span class="report-score">Signal score: ${score === null || score === undefined ? '—' : `${score}%`}</span>
     </div>
-    <p class="report-note">Detailed sections: <strong>${esc(vmScopeLabel)}</strong>. Executive summary, findings, categories and the complete metric appendix remain capture-wide.</p>
+    <p class="report-note">Detailed sections: <strong>${esc(scopeLabel)}</strong>. Metric categories: <strong>${esc([...categories].map(categoryLabel).join(', '))}</strong>. Executive summary, findings, categories and complete appendix are filtered by the selected categories; host/VM selection controls the detail sections.</p>
     <div class="report-summary">
       <div class="report-stat"><strong>${critical}</strong><span>Critical</span></div>
       <div class="report-stat"><strong>${warning}</strong><span>Warnings</span></div>
       <div class="report-stat"><strong>${info}</strong><span>Info</span></div>
-      <div class="report-stat"><strong>${formatNumber(summary.counts?.ok || 0, 0)}</strong><span>Within guardrail</span></div>
-      <div class="report-stat"><strong>${formatNumber(summary.counts?.neutral || 0, 0)}</strong><span>Unruled</span></div>
+      <div class="report-stat"><strong>${formatNumber(reportSummary.counts.ok, 0)}</strong><span>Within guardrail</span></div>
+      <div class="report-stat"><strong>${formatNumber(reportSummary.counts.neutral, 0)}</strong><span>Unruled</span></div>
     </div>
     <section class="report-section">
       <h2>Summary</h2>
-      <p>${esc(summary.headline || 'Capture loaded.')}</p>
-      ${summary.scoreBasis ? `<p class="report-note">${esc(summary.scoreBasis)}</p>` : ''}
+      <p>${esc(reportSummary.headline)}</p>
+      <p class="report-note">Signal score is the share of rule-evaluated series in the selected categories currently inside their guardrail.</p>
     </section>
     ${hostSections}
     <section class="report-section">
       <h2>What to do next</h2>
-      ${reportActions(findings)}
+      ${reportActions(findings, categories)}
     </section>
     <section class="report-section">
       <h2>Findings</h2>
@@ -784,12 +916,12 @@ export function reportBody(doc, scope = {}) {
     </section>
     <section class="report-section">
       <h2>Technical reference</h2>
-      ${reportTechnical(findings)}
+      ${reportTechnical(findings, categories)}
     </section>
     ${vmSections}
     <section class="report-section">
       <h2>Categories</h2>
-      ${reportCategories(doc)}
+      ${reportCategories(doc, categories)}
     </section>
     <section class="report-section">
       <h2>Capture details</h2>
@@ -797,7 +929,7 @@ export function reportBody(doc, scope = {}) {
     </section>
     <section class="report-section report-appendix">
       <h2>Complete metric appendix</h2>
-      ${reportMetricAppendix(doc)}
+      ${reportMetricAppendix(doc, categories)}
     </section>
     <section class="report-section">
       <h2>Method and caveats</h2>

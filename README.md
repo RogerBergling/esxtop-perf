@@ -28,7 +28,7 @@ Both screenshots use the bundled synthetic demo capture. The demo contains inten
 - **CPU, memory, storage, network, VM** — host cores, Group Cpu, Vcpu, Group Memory, Virtual Disk, Disk Device/Adapter, Network Port, power and vSAN.
 - **Green / yellow / red** — a transparent rule engine with sustained percentile checks, not a single-spike alarm.
 - **Evidence and references** — every finding shows the observed value, guardrail, why it matters, a next action and Broadcom/Yellow Bricks sources.
-- **HTML and PDF reports** — a standalone HTML report and browser print-to-PDF with the executive summary, a prioritized “What to do next” action plan, every finding, and a technical reference covering KAVG, DAVG, GAVG, %RDY, %MLMTD, %CSTP and the other counters behind the findings.
+- **HTML and PDF reports** — a standalone HTML report and browser print-to-PDF with the executive summary, a prioritized “What to do next” action plan, every finding, and a technical reference covering KAVG, DAVG, GAVG, %RDY, %MLMTD, %CSTP and the other counters behind the findings. Choose multiple hosts and VMs, filter six metric categories, and export HTML, PDF or a category-filtered metrics CSV.
 - **Written field guide** — the capture command explained token by token, CSV anatomy, counter semantics, playbooks and caveats.
 - **Focused capture manual** — a step-by-step `-c` workflow with a command builder, verification recipe and the traps that make a configuration silently ineffective.
 - **Local-only processing** — captures are parsed into a short-lived local session. No analytics, no third-party upload; the session is removed after 30 minutes or on restart.
@@ -93,7 +93,7 @@ The launcher serves the app on the first free port in **8080–8099** unless `--
 
 ```bash
 docker build \
-  --build-arg APP_VERSION=1.6.1 \
+  --build-arg APP_VERSION=1.7.0 \
   --build-arg IMAGE_TAG=local \
   --build-arg GIT_SHA="$(git rev-parse --short HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -239,11 +239,14 @@ The other panels are part of the rc file even when you only care about storage. 
 
 The **Report** page is a report builder, not an auto-generated document:
 
-- **All capture** — detailed host and VM sections include every host and every VM in the capture.
-- **One host** — choose one ESXi host and include all VMs on that host.
-- **Selected VMs** — choose one or more VMs on the selected host using Ctrl/Cmd-click. An empty list means all VMs on that host.
+- **All capture** — every host and every VM in the capture.
+- **Hosts + VMs** — select one or more ESXi hosts and one or more VMs across those hosts using Ctrl/Cmd-click. If no VM is selected, all VMs on the selected hosts are included.
+- **Hosts only** — selected host snapshots, host disk cards and host-level detail; no VM detail sections.
+- **Selected VMs only** — only the selected VMs, which may come from any host; host snapshots are omitted.
 
-Multi-host captures are detected from the host names in the PDH-CSV counter paths. Press **Generate report** after choosing the scope; HTML and PDF export buttons remain disabled until the visible report has been generated. The scoped detail includes host snapshots, host disk cards, VM summary, per-virtual-disk storage latency/I/O, and VM memory/network cards. The executive summary, findings, category overview and complete metric appendix remain capture-wide. Exported HTML and PDF use the generated scope.
+Six metric-category checkboxes — **CPU**, **Memory**, **Storage**, **Network**, **Power** and **Other** — filter the report capture-wide: summary counts and signal score, findings, the “What to do next” actions, technical reference, categories, VM detail columns and cards, host detail rows and disk cards, the complete appendix, and the filtered metrics CSV. Host/VM selection controls only the detailed host and VM sections. In the appendix every included series is grouped by entity, so each VM appears once as a heading with all of its captured metrics underneath; no series in the selected categories is dropped.
+
+Multi-host captures are detected from the host names in the PDH-CSV counter paths. Press **Generate report** after choosing the scope; HTML, PDF and CSV export buttons remain disabled until the visible report has been generated. The scoped detail includes host snapshots, host disk cards, VM summaries, per-virtual-disk storage latency/I/O, and VM memory/network cards. HTML and PDF use the chosen host/VM scope and categories; the filtered metrics CSV uses the selected categories.
 
 The app includes a step-by-step **Capture** page and command builder at `#/capture`. A detailed version is also in the [field guide](public/docs/esxtop-field-guide.md#focused-capture-with--c).
 
@@ -268,7 +271,7 @@ The **signal score** is the percentage of rule-evaluated series currently inside
 
 Open **Report** from the overview or the `#/report` route. **Export HTML** downloads a standalone, self-contained report. **Export PDF** opens the browser print dialog; choose **Save as PDF** and keep A4.
 
-The report contains the executive summary, a prioritized **What to do next** action plan derived from the findings, the findings themselves, a **Host snapshot** with CPU, memory, host disk-latency and network stats, **Host disk adapter/device cards** with all captured latency, queue, throughput and error values, a **VM summary**, **VM storage detail** with per-virtual-disk IOPS/throughput/GAVG/DAVG/KAVG/QAVG/QUED/ACTV/aborts/resets, **VM memory and network cards**, a **Technical reference** that explains the counters behind them — including KAVG, DAVG, GAVG, QAVG, `%RDY`, `%MLMTD`, `%CSTP`, ballooning, swap, NUMA locality and storage queue behaviour — and a **complete metric appendix** containing every captured series with Min/Avg/P95/Max/Last/status. The report toolbar also exports **all metrics as CSV**. The same technical notes appear on metric pages, finding cards, category pages and VM drilldowns.
+The report contains the executive summary, a prioritized **What to do next** action plan derived from the findings, the findings themselves, a **Host snapshot** with CPU, memory, host disk-latency and network stats, **Host disk adapter/device cards** with all captured latency, queue, throughput and error values, a **VM summary**, **VM storage detail** with per-virtual-disk IOPS/throughput/GAVG/DAVG/KAVG/QAVG/QUED/ACTV/aborts/resets, **VM memory and network cards**, a **Technical reference** that explains the counters behind them — including KAVG, DAVG, GAVG, QAVG, `%RDY`, `%MLMTD`, `%CSTP`, ballooning, swap, NUMA locality and storage queue behaviour — and a **complete metric appendix** containing every captured series with Min/Avg/P95/Max/Last/status. The report toolbar also exports the metrics in the selected categories as CSV. The complete appendix groups series by entity, so each VM, host or disk appears once as a heading with every captured metric beneath it. The same technical notes appear on metric pages, finding cards, category pages and VM drilldowns.
 
 ## Input and session limits
 
@@ -377,7 +380,7 @@ ghcr.io/rogerbergling/esxtop-perf
 | --- | --- |
 | Push to `main` | `latest`, `main`, `sha-<short>` |
 | Push to another branch | `<branch>`, `sha-<short>` |
-| Tag `v1.6.1` | `v1.6.1`, `sha-<short>` |
+| Tag `v1.7.0` | `v1.7.0`, `sha-<short>` |
 | Manual run | Tags for the selected ref |
 
 No repository secrets are required; the workflow uses `GITHUB_TOKEN`. A new GHCR package is private by default. Make it public once, or authenticate the host with `read:packages`.

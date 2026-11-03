@@ -200,8 +200,9 @@ export function vmSeries(document, vmName, host = null) {
   ));
 }
 
-export function vmSummary(document, name, host = null) {
-  const list = vmSeries(document, name, host);
+export function vmSummary(document, name, host = null, categories = null) {
+  const list = vmSeries(document, name, host)
+    .filter((series) => !categories || categories.has(series.category));
   const numeric = list.filter((series) => series.kind === 'numeric');
   const pick = (metric, field = 'p95', mode = 'max') => {
     const candidates = numeric.filter((series) => series.metric === metric && series.stats?.count);
@@ -256,7 +257,9 @@ export function vmSummary(document, name, host = null) {
   const vdisks = new Set(diskSeries.map((series) => series.instance || series.entity)).size;
   const status = worstStatus(list.map((series) => series.status));
   const findings = (document.findings || []).filter((finding) => (
-    finding.entity === name && (!host || !finding.host || finding.host === host)
+    finding.entity === name &&
+    (!host || !finding.host || finding.host === host) &&
+    (!categories || categories.has(finding.category))
   ));
   return {
     name, list, numeric, status, findings,

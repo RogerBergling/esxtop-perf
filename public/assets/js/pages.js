@@ -31,6 +31,7 @@ import {
   reportHostNames,
   reportStyles,
   reportVmNames,
+  REPORT_CATEGORIES,
 } from './report.js';
 import {
   relationshipsFor,
@@ -916,49 +917,53 @@ export function renderReport(ctx) {
   const hosts = reportHostNames(doc);
   const initialHost = doc.meta.host || hosts[0] || '';
   const initialVms = reportVmNames(doc, initialHost);
-  const scopeOptions = (selected = '') => hosts.map((host) => `<option value="${escapeAttr(host)}"${host === selected ? ' selected' : ''}>${esc(host)}</option>`).join('');
+  const hostOptions = (selected) => hosts.map((host) => `<option value="${escapeAttr(host)}"${host === selected ? ' selected' : ''}>${esc(host)}</option>`).join('');
+  const categoryChoices = REPORT_CATEGORIES.map((category) => `<label class="check-field report-category-choice"><input type="checkbox" data-report-category="${category}" checked> ${esc(categoryLabel(category))}</label>`).join('');
   return {
     html: `
       <div class="page-head">
         <div class="eyebrow">Export · capture report</div>
         <h1>Capture report</h1>
-        <p class="page-lede">A standalone report with the executive summary, a prioritized “What to do next” action plan, every finding, host and disk detail, VM detail, a technical reference and a complete appendix of every captured metric. Choose the report scope, generate it, then export HTML or PDF.</p>
+        <p class="page-lede">Choose one or more hosts, one or more VMs, and the metric categories to include. The report is not generated until you press <b>Generate report</b>, so the HTML/PDF always matches the chosen scope.</p>
         <div class="summary-actions report-toolbar">
           <button class="btn btn-primary" type="button" id="report-html" disabled>${icon('download', 15)} Export HTML</button>
           <button class="btn" type="button" id="report-pdf" disabled>${icon('file', 15)} Export PDF</button>
-          <button class="btn" type="button" id="report-metrics-csv">${icon('table', 15)} Export all metrics CSV</button>
+          <button class="btn" type="button" id="report-metrics-csv" disabled>${icon('table', 15)} Export filtered metrics CSV</button>
           <a class="btn btn-ghost" href="#/">${icon('back', 14)} Back to overview</a>
         </div>
         <div class="callout mt-1"><strong>PDF export:</strong> generate the report first, then the browser print dialog opens. Choose <b>Save as PDF</b> (or “Print to PDF”) and keep the default A4 page size.</div>
       </div>
       ${captureTabs(doc, 'report')}
       <section class="card report-scope-card">
-        <div class="card-header"><div><div class="card-kicker">Report scope</div><h2>Choose what the detailed section should cover</h2></div>${pill('Choose before generating', 'accent')}</div>
+        <div class="card-header"><div><div class="card-kicker">Report scope</div><h2>Choose hosts, VMs and metric categories</h2></div>${pill('Generate after choosing', 'accent')}</div>
         <div class="seg report-scope-modes" role="group" aria-label="Report scope">
           <button class="active" type="button" data-report-mode="all">All capture</button>
-          <button type="button" data-report-mode="host">One host</button>
-          <button type="button" data-report-mode="vm">Selected VMs</button>
+          <button type="button" data-report-mode="both">Hosts + VMs</button>
+          <button type="button" data-report-mode="hosts">Hosts only</button>
+          <button type="button" data-report-mode="vms">Selected VMs only</button>
         </div>
         <div class="form-grid">
-          <label class="field" id="report-host-field" hidden><span>ESXi host</span><select class="select" id="report-host">${scopeOptions(initialHost)}</select></label>
-          <label class="field field-wide" id="report-vm-field" hidden><span>VMs in detailed sections</span><select class="select" id="report-vms" multiple size="6">${initialVms.map((name) => `<option value="${escapeAttr(name)}">${esc(name)}</option>`).join('')}</select></label>
+          <label class="field" id="report-hosts-field" hidden><span>ESXi hosts (select one or more)</span><select class="select" id="report-hosts" multiple size="5">${hostOptions(initialHost)}</select></label>
+          <label class="field" id="report-vms-field" hidden><span>VMs (select one or more; empty = all on selected hosts)</span><select class="select" id="report-vms" multiple size="8">${initialVms.map((name) => `<option value="${escapeAttr(JSON.stringify([initialHost, name]))}">${esc(name)}</option>`).join('')}</select></label>
+          <label class="field field-wide"><span>Metric categories</span><span class="report-category-grid">${categoryChoices}</span></label>
         </div>
-        <p class="report-note" id="report-scope-help"><b>All capture:</b> detailed host and VM sections include every host and every VM. Global summary, findings and appendix remain capture-wide.</p>
+        <p class="report-note" id="report-scope-help"><b>All capture:</b> all hosts, all VMs and all selected metric categories. Hosts + VMs: select multiple hosts and multiple VMs across them. Hosts only: host/disk detail only. Selected VMs only: VM detail only.</p>
         <div class="summary-actions">
           <button class="btn btn-primary" type="button" id="report-generate">${icon('play', 14)} Generate report</button>
-          <button class="btn btn-sm" type="button" id="report-clear-vms" hidden>All VMs on host</button>
+          <button class="btn btn-sm" type="button" id="report-categories-all">All categories</button>
+          <button class="btn btn-sm" type="button" id="report-clear-vms" hidden>All VMs on selected hosts</button>
           <span class="dim" id="report-scope-summary">Choose a scope, then generate the report.</span>
         </div>
       </section>
       <style>${reportStyles()}</style>
       <div id="report-content">
-        <div class="card flat report-placeholder"><div class="card-kicker">No report generated yet</div><h2>Choose a scope above</h2><p class="muted">Select <b>All capture</b>, one host, or one or more VMs. Then press <b>Generate report</b>. The export buttons are enabled after generation so the HTML/PDF always matches the visible report.</p></div>
+        <div class="card flat report-placeholder"><div class="card-kicker">No report generated yet</div><h2>Choose a scope above</h2><p class="muted">Select hosts, VMs and categories, then press <b>Generate report</b>. The export buttons remain disabled until the report is generated.</p></div>
       </div>
     `,
     mount(root) {
-      const hostField = root.querySelector('#report-host-field');
-      const vmField = root.querySelector('#report-vm-field');
-      const hostSelect = root.querySelector('#report-host');
+      const hostsField = root.querySelector('#report-hosts-field');
+      const vmsField = root.querySelector('#report-vms-field');
+      const hostsSelect = root.querySelector('#report-hosts');
       const vmSelect = root.querySelector('#report-vms');
       const content = root.querySelector('#report-content');
       const summary = root.querySelector('#report-scope-summary');
@@ -966,96 +971,125 @@ export function renderReport(ctx) {
       const clearVms = root.querySelector('#report-clear-vms');
       const htmlButton = root.querySelector('#report-html');
       const pdfButton = root.querySelector('#report-pdf');
+      const csvButton = root.querySelector('#report-metrics-csv');
       const modeButtons = [...root.querySelectorAll('[data-report-mode]')];
       let mode = 'all';
       let generatedScope = null;
 
+      const selectedHosts = () => (hostsSelect ? [...hostsSelect.selectedOptions].map((option) => option.value) : []);
+      const selectedVmPairs = () => (vmSelect ? [...vmSelect.selectedOptions].map((option) => {
+        try {
+          const parsed = JSON.parse(option.value);
+          if (Array.isArray(parsed)) return { host: parsed[0], vm: parsed[1] };
+          return parsed?.vm ? parsed : null;
+        } catch { return null; }
+      }).filter(Boolean) : []);
+      const selectedCategories = () => [...root.querySelectorAll('[data-report-category]:checked')].map((input) => input.dataset.reportCategory);
       const selectedScope = () => ({
         mode,
-        host: hostSelect?.value || initialHost,
-        vms: mode === 'vm' && vmSelect ? [...vmSelect.selectedOptions].map((option) => option.value) : [],
+        hosts: mode === 'both' || mode === 'hosts' ? selectedHosts() : [],
+        vms: mode === 'both' || mode === 'vms' ? selectedVmPairs() : [],
+        categories: selectedCategories(),
       });
+      const vmOptionHtml = (host, name) => `<option value="${escapeAttr(JSON.stringify([host, name]))}">${esc(host)} · ${esc(name)}</option>`;
+      const populateVms = () => {
+        if (!vmSelect) return;
+        const hostsForVms = mode === 'vms' ? hosts : selectedHosts();
+        const groups = hostsForVms.map((host) => {
+          const names = reportVmNames(doc, host);
+          if (!names.length) return '';
+          return `<optgroup label="${escapeAttr(host)}">${names.map((name) => vmOptionHtml(host, name)).join('')}</optgroup>`;
+        }).join('');
+        vmSelect.innerHTML = groups;
+        vmSelect.size = Math.max(4, Math.min(10, hostsForVms.reduce((count, host) => count + reportVmNames(doc, host).length, 0) || 4));
+      };
+      const updateScopeState = (reset = true) => {
+        const hostMode = mode === 'both' || mode === 'hosts';
+        const vmMode = mode === 'both' || mode === 'vms';
+        if (hostsField) hostsField.hidden = !hostMode;
+        if (vmsField) vmsField.hidden = !vmMode;
+        if (clearVms) clearVms.hidden = !vmMode;
+        modeButtons.forEach((button) => button.classList.toggle('active', button.dataset.reportMode === mode));
+        if (help) {
+          help.innerHTML = mode === 'all'
+            ? '<b>All capture:</b> all hosts and all VMs, filtered by the selected metric categories.'
+            : mode === 'both'
+              ? '<b>Hosts + VMs:</b> select multiple hosts and multiple VMs across them. If no VM is selected, all VMs on the selected hosts are included.'
+              : mode === 'hosts'
+                ? '<b>Hosts only:</b> include host snapshots and host disk detail only. No VM sections.'
+                : '<b>Selected VMs only:</b> include only selected VMs; no host snapshot. Select VMs across any hosts.';
+        }
+        if (summary) {
+          const cats = selectedCategories();
+          const hostCount = selectedHosts().length;
+          const vmCount = selectedVmPairs().length;
+          summary.textContent = reset
+            ? `Categories: ${cats.length}/6 · scope ready to generate`
+            : generatedScope
+              ? `Generated · ${cats.length}/6 categories${mode === 'all' ? ' · all hosts/VMs' : mode === 'vms' ? ` · ${vmCount} VMs` : mode === 'both' ? ` · ${hostCount} hosts / ${vmCount || 'all'} VMs` : ` · ${hostCount} hosts`}`
+              : 'Choose a scope, then generate the report.';
+        }
+        if (reset) showPlaceholder();
+      };
       const showPlaceholder = (message = 'Choose a scope above, then press Generate report.') => {
         generatedScope = null;
         content.innerHTML = `<div class="card flat report-placeholder"><div class="card-kicker">Report not generated</div><h2>${esc(message)}</h2><p class="muted">Export buttons are disabled until a report is generated.</p></div>`;
         if (htmlButton) htmlButton.disabled = true;
         if (pdfButton) pdfButton.disabled = true;
-      };
-      const updateVisibility = () => {
-        const hostMode = mode !== 'all';
-        const vmMode = mode === 'vm';
-        if (hostField) hostField.hidden = !hostMode;
-        if (vmField) vmField.hidden = !vmMode;
-        if (clearVms) clearVms.hidden = !vmMode;
-        modeButtons.forEach((button) => button.classList.toggle('active', button.dataset.reportMode === mode));
-        if (help) {
-          help.innerHTML = mode === 'all'
-            ? '<b>All capture:</b> detailed host and VM sections include every host and every VM. Global summary, findings and appendix remain capture-wide.'
-            : mode === 'host'
-              ? `<b>One host:</b> include every VM on <code>${esc(hostSelect?.value || initialHost)}</code>. Global summary, findings and appendix remain capture-wide.`
-              : '<b>Selected VMs:</b> include only the chosen VMs on the chosen host. Leave the list empty for all VMs on that host. Global summary, findings and appendix remain capture-wide.';
-        }
-        if (summary) summary.textContent = mode === 'all'
-          ? 'All hosts and VMs'
-          : mode === 'host'
-            ? `All VMs on ${hostSelect?.value || initialHost}`
-            : `${vmSelect ? [...vmSelect.selectedOptions].length : 0} selected VM(s) on ${hostSelect?.value || initialHost}`;
-      };
-      const populateVms = () => {
-        const host = hostSelect?.value || initialHost;
-        const names = reportVmNames(doc, host);
-        if (vmSelect) {
-          vmSelect.innerHTML = names.map((name) => `<option value="${escapeAttr(name)}">${esc(name)}</option>`).join('');
-          vmSelect.size = Math.max(4, Math.min(8, names.length || 4));
-        }
-        updateVisibility();
-        showPlaceholder();
+        if (csvButton) csvButton.disabled = true;
       };
       modeButtons.forEach((button) => button.addEventListener('click', () => {
         mode = button.dataset.reportMode || 'all';
-        if (mode === 'all') {
-          updateVisibility();
-          showPlaceholder();
-        } else {
-          populateVms();
-        }
+        populateVms();
+        updateScopeState();
       }));
-      hostSelect?.addEventListener('change', populateVms);
-      vmSelect?.addEventListener('change', () => {
-        updateVisibility();
-        showPlaceholder('Scope changed');
+      hostsSelect?.addEventListener('change', () => {
+        populateVms();
+        updateScopeState();
       });
+      vmSelect?.addEventListener('change', () => updateScopeState());
       clearVms?.addEventListener('click', () => {
         if (!vmSelect) return;
         [...vmSelect.options].forEach((option) => { option.selected = false; });
-        updateVisibility();
-        showPlaceholder('Scope changed');
+        updateScopeState();
+      });
+      root.querySelectorAll('[data-report-category]').forEach((input) => input.addEventListener('change', () => updateScopeState()));
+      root.querySelector('#report-categories-all')?.addEventListener('click', () => {
+        root.querySelectorAll('[data-report-category]').forEach((input) => { input.checked = true; });
+        updateScopeState();
       });
       root.querySelector('#report-generate')?.addEventListener('click', () => {
+        if (!selectedCategories().length) {
+          ctx.toast('Select at least one metric category.');
+          return;
+        }
+        if ((mode === 'both' || mode === 'hosts') && !selectedHosts().length) {
+          ctx.toast('Select at least one ESXi host.');
+          return;
+        }
+        if (mode === 'vms' && !selectedVmPairs().length) {
+          ctx.toast('Select at least one VM.');
+          return;
+        }
         generatedScope = selectedScope();
         content.innerHTML = reportBody(doc, generatedScope);
         if (htmlButton) htmlButton.disabled = false;
         if (pdfButton) pdfButton.disabled = false;
-        updateVisibility();
-        if (summary) {
-          summary.textContent = generatedScope.mode === 'all'
-            ? 'Report generated: all hosts and VMs'
-            : generatedScope.mode === 'host'
-              ? `Report generated: all VMs on ${generatedScope.host}`
-              : `Report generated: ${generatedScope.vms.length || 'all'} VM(s) on ${generatedScope.host}`;
-        }
+        if (csvButton) csvButton.disabled = false;
+        updateScopeState(false);
       });
       htmlButton?.addEventListener('click', () => {
-        if (!generatedScope) return;
-        downloadReportHTML(doc, ctx.toast, generatedScope);
+        if (generatedScope) downloadReportHTML(doc, ctx.toast, generatedScope);
       });
       pdfButton?.addEventListener('click', () => {
-        if (!generatedScope) return;
-        openReportPrintWindow(doc, ctx.toast, generatedScope);
+        if (generatedScope) openReportPrintWindow(doc, ctx.toast, generatedScope);
       });
-      root.querySelector('#report-metrics-csv')?.addEventListener('click', () => {
+      csvButton?.addEventListener('click', () => {
+        if (!generatedScope) return;
+        const categories = new Set(generatedScope.categories);
         const rows = [['category', 'metric', 'metric_name', 'group', 'instance', 'entity', 'scope', 'unit', 'min', 'avg', 'p95', 'max', 'last', 'status', 'raw_header']];
         for (const series of doc.series || []) {
+          if (!categories.has(series.category)) continue;
           rows.push([
             series.category, series.metric, doc.metrics?.[series.metric]?.name || series.metricName || series.metric,
             series.group, series.instance, series.entity, series.scope, series.unit,
@@ -1063,9 +1097,9 @@ export function renderReport(ctx) {
             series.status, series.rawHeader,
           ]);
         }
-        csvDownload(`esxtop-all-metrics-${doc.meta.host || 'capture'}.csv`, rows);
+        csvDownload(`esxtop-filtered-metrics-${doc.meta.host || 'capture'}.csv`, rows);
       });
-      updateVisibility();
+      updateScopeState();
       showPlaceholder();
     },
   };
