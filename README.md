@@ -93,7 +93,7 @@ The launcher serves the app on the first free port in **8080–8099** unless `--
 
 ```bash
 docker build \
-  --build-arg APP_VERSION=1.6.0 \
+  --build-arg APP_VERSION=1.6.1 \
   --build-arg IMAGE_TAG=local \
   --build-arg GIT_SHA="$(git rev-parse --short HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -237,12 +237,13 @@ The other panels are part of the rc file even when you only care about storage. 
 
 ### Report scope
 
-The **Report** page includes a scope selector for the detailed sections:
+The **Report** page is a report builder, not an auto-generated document:
 
-- **ESXi host** — choose the host whose host snapshot and disk adapter/device cards you want. Multi-host captures are detected from the host names in the PDH-CSV counter paths.
-- **VMs** — choose no VM (all VMs on that host), one VM, or multiple VMs using Ctrl/Cmd-click.
+- **All capture** — detailed host and VM sections include every host and every VM in the capture.
+- **One host** — choose one ESXi host and include all VMs on that host.
+- **Selected VMs** — choose one or more VMs on the selected host using Ctrl/Cmd-click. An empty list means all VMs on that host.
 
-The scoped detail includes the host snapshot, host disk cards, VM summary, per-virtual-disk storage latency/I/O, and VM memory/network cards. The executive summary, findings, category overview and complete metric appendix remain capture-wide. Exported HTML and PDF use the currently selected host/VM scope.
+Multi-host captures are detected from the host names in the PDH-CSV counter paths. Press **Generate report** after choosing the scope; HTML and PDF export buttons remain disabled until the visible report has been generated. The scoped detail includes host snapshots, host disk cards, VM summary, per-virtual-disk storage latency/I/O, and VM memory/network cards. The executive summary, findings, category overview and complete metric appendix remain capture-wide. Exported HTML and PDF use the generated scope.
 
 The app includes a step-by-step **Capture** page and command builder at `#/capture`. A detailed version is also in the [field guide](public/docs/esxtop-field-guide.md#focused-capture-with--c).
 
@@ -376,7 +377,7 @@ ghcr.io/rogerbergling/esxtop-perf
 | --- | --- |
 | Push to `main` | `latest`, `main`, `sha-<short>` |
 | Push to another branch | `<branch>`, `sha-<short>` |
-| Tag `v1.6.0` | `v1.6.0`, `sha-<short>` |
+| Tag `v1.6.1` | `v1.6.1`, `sha-<short>` |
 | Manual run | Tags for the selected ref |
 
 No repository secrets are required; the workflow uses `GITHUB_TOKEN`. A new GHCR package is private by default. Make it public once, or authenticate the host with `read:packages`.

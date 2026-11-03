@@ -722,13 +722,35 @@ export function reportBody(doc, scope = {}) {
   const warning = summary.warning || 0;
   const info = summary.info || 0;
   const vms = (doc.vms || []).length;
-  const scopeHost = scope.host || meta.host || '';
-  const scopeVms = reportScopedVmNames(doc, scopeHost, scope.vms || []);
   const hosts = reportHostNames(doc);
+  const mode = ['all', 'host', 'vm'].includes(scope.mode) ? scope.mode : 'all';
+  const scopeHost = scope.host || meta.host || hosts[0] || '';
+  const scopeVms = scope.vms || [];
+  const detailHosts = mode === 'all' ? (hosts.length ? hosts : [scopeHost]) : [scopeHost].filter(Boolean);
+  const vmScopeLabel = mode === 'all'
+    ? `all ${vms} VMs across ${detailHosts.length} host${detailHosts.length === 1 ? '' : 's'}`
+    : mode === 'host'
+      ? `all VMs on ${scopeHost}`
+      : `${scopeVms.length ? `${scopeVms.length} selected VM${scopeVms.length === 1 ? '' : 's'}` : 'all VMs'} on ${scopeHost}`;
+  const title = mode === 'all' && hosts.length > 1 ? 'All ESXi hosts · capture report' : (scopeHost || 'ESXi host');
   const generated = new Date().toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  const hostSections = detailHosts.map((host) => `<section class="report-section">
+      <h2>Host snapshot${detailHosts.length > 1 ? ` · ${esc(host)}` : ''}</h2>
+      ${reportHost(doc, host)}
+    </section>`).join('');
+  const vmSections = detailHosts.map((host) => {
+    const names = mode === 'vm' ? reportScopedVmNames(doc, host, scopeVms) : reportVmNames(doc, host);
+    if (!names.length) return '';
+    return `<section class="report-section">
+      ${detailHosts.length > 1 ? `<h3>Virtual machines · ${esc(host)}</h3>` : ''}
+      ${reportVms(doc, host, mode === 'vm' ? scopeVms : [])}
+      ${reportVmStorage(doc, host, mode === 'vm' ? scopeVms : [])}
+      ${reportVmMemoryNetwork(doc, host, mode === 'vm' ? scopeVms : [])}
+    </section>`;
+  }).join('');
   return `<section class="capture-report">
     <div class="report-kicker">ESXtop Lens · capture report</div>
-    <h1>${esc(scopeHost || 'ESXi host')}</h1>
+    <h1>${esc(title)}</h1>
     <p class="report-subtitle">${esc(meta.filename || 'capture')} · ${esc(meta.captureStart || '')} → ${esc(meta.captureEnd || '')}</p>
     <div class="report-status-row">
       ${badgeFor(status)}
@@ -738,7 +760,7 @@ export function reportBody(doc, scope = {}) {
       ${hosts.length > 1 ? `<span class="report-pill">${hosts.length} hosts</span>` : ''}
       <span class="report-score">Signal score: ${score === null || score === undefined ? '—' : `${score}%`}</span>
     </div>
-    <p class="report-note">Detailed host and VM sections are scoped to <strong>${esc(scopeHost || 'the capture host')}</strong>${scopeVms.length ? ` and ${scopeVms.length === 1 ? 'VM' : 'VMs'} ${esc(scopeVms.join(', '))}` : ' and all VMs on that host'}. Executive summary, findings, categories and the complete metric appendix remain capture-wide.</p>
+    <p class="report-note">Detailed sections: <strong>${esc(vmScopeLabel)}</strong>. Executive summary, findings, categories and the complete metric appendix remain capture-wide.</p>
     <div class="report-summary">
       <div class="report-stat"><strong>${critical}</strong><span>Critical</span></div>
       <div class="report-stat"><strong>${warning}</strong><span>Warnings</span></div>
@@ -751,10 +773,7 @@ export function reportBody(doc, scope = {}) {
       <p>${esc(summary.headline || 'Capture loaded.')}</p>
       ${summary.scoreBasis ? `<p class="report-note">${esc(summary.scoreBasis)}</p>` : ''}
     </section>
-    <section class="report-section">
-      <h2>Host snapshot</h2>
-      ${reportHost(doc, scopeHost)}
-    </section>
+    ${hostSections}
     <section class="report-section">
       <h2>What to do next</h2>
       ${reportActions(findings)}
@@ -767,12 +786,7 @@ export function reportBody(doc, scope = {}) {
       <h2>Technical reference</h2>
       ${reportTechnical(findings)}
     </section>
-    <section class="report-section">
-      <h2>Virtual machines</h2>
-      ${reportVms(doc, scopeHost, scope.vms || [])}
-      ${reportVmStorage(doc, scopeHost, scope.vms || [])}
-      ${reportVmMemoryNetwork(doc, scopeHost, scope.vms || [])}
-    </section>
+    ${vmSections}
     <section class="report-section">
       <h2>Categories</h2>
       ${reportCategories(doc)}

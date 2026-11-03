@@ -712,3 +712,17 @@ table.data tr.clickable:hover td.name a { text-decoration: underline; }
 .report-scope-card .form-grid { margin-top: .5rem; }
 .report-scope-card #report-vms { min-height: 132px; }
 .report-scope-card .report-note { margin-top: .55rem; }
+
+/* ---------- report builder ---------- */
+.report-scope-modes { display: inline-flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden; margin: .2rem 0 .7rem; }
+.report-scope-modes button { font: inherit; font-size: .76rem; padding: .38rem .7rem; background: transparent; border: 0; border-right: 1px solid var(--line); color: var(--muted); cursor: pointer; }
+.report-scope-modes button:last-child { border-right: 0; }
+.report-scope-modes button:hover { background: var(--panel-2); color: var(--text); }
+.report-scope-modes button.active { background: var(--accent); color: var(--accent-ink); font-weight: 650; }
+.report-placeholder { border-style: dashed; margin: 1rem 0; }
+.report-placeholder h2 { font-size: 1.1rem; margin-bottom: .35rem; }
+.report-placeholder p { margin: 0; max-width: 70ch; }
+@media (max-width: 620px) {
+  .report-scope-modes { display: flex; }
+  .report-scope-modes button { flex: 1 1 auto; }
+}
