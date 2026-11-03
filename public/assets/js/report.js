@@ -823,6 +823,7 @@ function reportMethod(doc) {
         <li>Percentiles describe the whole capture window. A single spike and a sustained plateau are different problems.</li>
         <li>VM-scoped CPU and memory findings use only VM groups. Internal ESXi system worlds are excluded.</li>
         <li>The signal score is the share of rule-evaluated signals inside their guardrail; it is not a capacity-planning score or a vSphere alarm.</li>
+        <li><strong>Healthy</strong> means a curated rule evaluated this series and it is inside its guardrail. <strong>Warning</strong> and <strong>Critical</strong> mean the rule threshold was crossed. <strong>Info</strong> is an informational rule. <strong>No rule</strong> means no curated threshold was applied, so no health verdict exists for that series. No rule does not mean healthy, zero, missing or hidden.</li>
         <li>References point to Broadcom/VMware and Yellow Bricks guidance. Verify thresholds against the current vendor documentation.</li>
       </ul>
     </div>
@@ -922,7 +923,7 @@ export function reportBody(doc, scope = {}) {
       <div class="report-stat"><strong>${warning}</strong><span>Warnings</span></div>
       <div class="report-stat"><strong>${info}</strong><span>Info</span></div>
       <div class="report-stat"><strong>${formatNumber(reportSummary.counts.ok, 0)}</strong><span>Within guardrail</span></div>
-      <div class="report-stat"><strong>${formatNumber(reportSummary.counts.neutral, 0)}</strong><span>Unruled</span></div>
+      <div class="report-stat"><strong>${formatNumber(reportSummary.counts.neutral, 0)}</strong><span>No rule</span></div>
     </div>
     <section class="report-section">
       <h2>Summary</h2>

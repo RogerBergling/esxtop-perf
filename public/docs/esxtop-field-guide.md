@@ -586,6 +586,37 @@ The engine uses P95 for sustained conditions and the maximum for hard error coun
 
 The application reports what the capture contains. If a field was not captured, the corresponding risk cannot be evaluated. A clean report means no curated guardrail was crossed; it does not prove that the host is healthy.
 
+### Status semantics: Healthy, Warning, Critical, Info and No rule
+
+The badge on a series or finding describes the curated rule result. It is not a general health score for the host, VM, array or application.
+
+| Status | Meaning | Important caveat |
+| --- | --- | --- |
+| **Healthy** (`ok`) | A curated rule evaluated the series at its configured statistic and the value was inside the guardrail. | The rule passed; this says nothing about metrics that are unruled, missing, or outside their own rules. It is not proof that the host is healthy. |
+| **Warning** (`warn`) | The rule was evaluated and crossed its warning threshold. | Review the raw series and context. A warning is a triage prompt, not automatically the root cause. |
+| **Critical** (`critical`) | The rule was evaluated and crossed its critical threshold, or a hard-error rule found an abnormal value. | Act after confirmation. The rule identifies an abnormal signal, not necessarily the component that caused the incident. |
+| **Info** (`info`) | An informational rule matched. | It is a contextual rule result, not a pass or an alarm. Info is excluded from the healthy/warning/critical score denominator. |
+| **No rule** (`neutral`) | The series was captured and is displayed, but no curated threshold applies to it, or no rule targets that metric/scope/group. | No verdict exists. It does not mean zero, missing, hidden, broken or healthy. Inspect the value and its relationships manually. |
+
+Rules choose their statistic deliberately:
+
+- **P95** is used for most sustained “higher is worse” conditions to avoid reacting to one sample.
+- **P05** is used for “lower is worse” conditions such as NUMA locality.
+- **Maximum** is used for hard error counters such as aborts, resets and failed ATS/UNMAP operations.
+- Some rules use average or median when the counter semantics call for it.
+
+The signal score is the share of **rule-evaluated** series that are healthy:
+
+```text
+healthy / (healthy + warning + critical)
+```
+
+Info and No rule are excluded. If no series was rule-evaluated, the score is displayed as `—`, not as 0% or 100%.
+
+**Nothing captured is hidden from the user.** Every captured series is available in All metrics, its metric page, the complete report appendix and the filtered metrics CSV, including every No-rule series. A field that is absent from the upload is omitted from the rendered UI because there is no captured value; it is not shown as zero, healthy or No rule. A field that exists in the capture but has no sample for a particular entity may show `—` for that entity; that is entity-level absence, not a missing captured column.
+
+“No rule” is common for context counters, allocation settings, newly catalogued vendor fields, interrupt details, power-state breakdowns and VAAI/UNMAP counters. The value is still evidence; it simply has no curated threshold. The absence of a finding means no curated guardrail was crossed, not that the environment is guaranteed healthy.
+
 Specific limits:
 
 - Guardrails are not universal. An array vendor may define a normal latency that is higher or lower than 10 ms.

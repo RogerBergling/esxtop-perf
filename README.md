@@ -32,7 +32,7 @@ Both screenshots use the bundled synthetic demo capture. The demo contains inten
 - **Written field guide** — the capture command explained token by token, CSV anatomy, counter semantics, playbooks and caveats.
 - **Focused capture manual** — a step-by-step `-c` workflow with a command builder, verification recipe and the traps that make a configuration silently ineffective.
 - **Local-only processing** — captures are parsed into a short-lived local session. No analytics, no third-party upload; the session is removed after 30 minutes or on restart. An optional upload password can be set before exposing the app beyond localhost.
-- **Docker + GHCR + Watchtower** — multi-arch image publishing and automatic updates every 5 minutes, scoped to this container.
+- **Docker + GHCR** — multi-arch image publishing; updates are deliberate (`docker compose pull`), with no Docker socket mounted and no automatic-update sidecar.
 
 ## Quick start
 
@@ -61,15 +61,7 @@ docker compose up -d --force-recreate
 curl -s http://localhost:8004/version.json | python3 -m json.tool
 ```
 
-Watchtower is included and starts with the stack:
-
-```bash
-docker compose up -d
-```
-
-It checks every **5 minutes** and updates only the `esxtop` container through the Watchtower scope label. It mounts `/var/run/docker.sock`, which is host-level privilege, so remove the `watchtower` service from `compose.yaml` if you do not want automatic updates.
-
-The Watchtower service also mounts `${HOME}/.docker/config.json` for registry authentication. Run `docker login ghcr.io` once to create that file, or remove the volume line when using the public image without authenticated pulls.
+The Compose file does **not** mount `/var/run/docker.sock` and does **not** include an automatic-update sidecar. Update deliberately with the commands above. If you use an external updater, secure it separately; ESXtop Lens does not ship one.
 
 ### Local Python
 
@@ -158,7 +150,7 @@ There is no bundler, framework, CDN, external font or runtime dependency.
 | Frontend | Native ES modules, HTML, CSS | No build step, no dependency drift |
 | Charts | Hand-written SVG + pointer events | No charting library, responsive and accessible |
 | Container | `python:3.12-alpine`, non-root, read-only | Small attack surface |
-| Delivery | GitHub Actions → GHCR, Compose + Watchtower | Same model as the Learning project |
+| Delivery | GitHub Actions → GHCR, Compose | Multi-arch image publishing without Docker socket exposure |
 
 Node is not required to run the app. It is used only in CI for `node --check`.
 
@@ -326,6 +318,37 @@ Rules are defined in `esxtop_perf/analysis.py` and documented in the field guide
 The engine uses P95 for sustained conditions, P05 for “lower is worse” metrics such as NUMA locality, and the maximum for hard error counters such as aborts and failed ATS/UNMAP. Equivalent host CPU counters (`PCPU %`, `% Util Time`, `% Core Util Time`) are grouped into one finding to avoid duplicate noise.
 
 The **signal score** is the percentage of rule-evaluated series currently inside their guardrail. It is a triage aid, not a capacity-planning metric and not a vSphere alarm score.
+
+### Status semantics: Healthy, Warning, Critical, Info and No rule
+
+The status attached to a series or finding is a statement about the **curated rule engine**, not a general statement that the host or VM is healthy. The app deliberately shows the raw value and its context even when no verdict is available.
+
+| Status | What it means | What it does not mean |
+| --- | --- | --- |
+| **Healthy** (`ok`) | A curated rule evaluated this series at its configured statistic (usually P95, sometimes P05 or maximum) and the value was inside the rule's guardrail. | It does not prove the host, VM, array or application is healthy. Other metrics may be unruled, outside their guardrails, or absent from the capture. |
+| **Warning** (`warn`) | The rule was evaluated and crossed its warning threshold. This is a triage prompt to inspect evidence. | It is not automatically a root cause or an outage. A warning can be transient or expected for the workload. |
+| **Critical** (`critical`) | The rule was evaluated and crossed its critical threshold, or a hard-error rule found an abnormal value. | It is not proof of the root cause. Confirm the raw series and the surrounding metrics before changing production. |
+| **Info** (`info`) | An informational rule matched. This is a contextual signal, commonly used where a value is meaningful but not automatically a warning or critical condition. | It is not a clean pass and not necessarily an incident. It is excluded from the Healthy/Warning/Critical score calculation. |
+| **No rule** (`neutral`) | The series was captured and displayed, but no curated threshold applies to it, or the available rules do not target its scope/group. | It does not mean zero, missing, ignored, hidden, broken or healthy. The value still appears in the metric explorer, tables, report appendix and CSV. |
+
+Rules evaluate a specific statistic:
+
+- **P95** for most “higher is worse” conditions, which reduces single-spike noise.
+- **P05** for “lower is worse” conditions such as NUMA locality.
+- **Maximum** for hard error counters such as aborts, resets and failed ATS/UNMAP operations.
+- A small number of rules use another statistic such as average or median where the rule definition says so.
+
+The **signal score** is:
+
+```text
+healthy rule-evaluated series / (healthy + warning + critical rule-evaluated series)
+```
+
+“Info” and “No rule” are excluded. If no series is rule-evaluated, the score is shown as `—` rather than as 0% or 100%.
+
+**We do not hide captured data.** Every captured series remains available in **All metrics**, its metric page, the complete report appendix and the filtered metrics CSV, including every “No rule” series. A field that is completely absent from the upload is omitted from the UI because there is no captured value to display; it is not converted to zero, healthy or “No rule.” A field that exists but has no value for one entity may show `—` for that entity, which is an entity-level absence rather than a missing captured field.
+
+The absence of a finding is not a guarantee of health. A clean rule result means only that the curated rules evaluated the available series and found no threshold breach. Confirm the raw counters, the guest, the array, the network and the change history before concluding that the environment is healthy.
 
 > Performance is contextual. A red signal is not automatically the root cause, and a clean report is not proof that the host is healthy. Confirm every recommendation in your own guest, array and network.
 

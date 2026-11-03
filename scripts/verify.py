@@ -119,10 +119,10 @@ def main() -> int:
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     guide = (ROOT / "public/docs/esxtop-field-guide.md").read_text(encoding="utf-8")
-    for marker in ("Field coverage and presence-aware views", "Present and zero", "vSAN requires vSAN to be enabled", "Application security and uploads", "ESXTOP_UPLOAD_PASSWORD", "Interrupts"):
+    for marker in ("Field coverage and presence-aware views", "Present and zero", "Status semantics: Healthy, Warning, Critical, Info and No rule", "No rule", "vSAN requires vSAN to be enabled", "Application security and uploads", "ESXTOP_UPLOAD_PASSWORD", "Interrupts"):
         check(marker in guide, f"field guide missing field/security documentation: {marker}")
 
-    for phrase in ("Quick start", "Docker", "GHCR", "Watchtower", "Validation", "Project structure"):
+    for phrase in ("Quick start", "Docker", "GHCR", "Validation", "Project structure"):
         check(phrase.lower() in readme.lower(), f"README is missing section/keyword: {phrase}")
     check("### Sizing large captures" in readme, "README lacks large-capture sizing guidance")
     check("peak memory ≈ 0.6 GB" in readme, "README lacks the memory sizing formula")
@@ -132,6 +132,9 @@ def main() -> int:
     check("### Report scope" in readme, "README lacks report host/VM scope documentation")
     check("### Field coverage and presence-aware views" in readme, "README lacks field coverage/presence documentation")
     check("### Upload password and public exposure" in readme, "README lacks upload-password security documentation")
+    check("### Status semantics: Healthy, Warning, Critical, Info and No rule" in readme, "README lacks status semantics documentation")
+    for status in ("Healthy", "Warning", "Critical", "Info", "No rule"):
+        check(status in readme, f"README lacks status definition: {status}")
     for phrase in ("Hosts + VMs", "Hosts only", "Selected VMs only", "metric-category checkboxes", "Interrupts", "filter the report capture-wide", "grouped by entity", "Only metrics present in the capture are rendered", "vSAN fields are emitted only when vSAN is enabled", "ESXTOP_UPLOAD_PASSWORD", "never embedded in the frontend"):
         check(phrase.lower() in readme.lower(), f"README lacks report/field/security documentation: {phrase}")
 
@@ -145,11 +148,8 @@ def main() -> int:
     check('ESXTOP_MAX_CONCURRENT_ANALYSES' in compose, "compose does not pass ESXTOP_MAX_CONCURRENT_ANALYSES")
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
     check("ESXTOP_UPLOAD_PASSWORD" in env_example, ".env.example lacks ESXTOP_UPLOAD_PASSWORD")
-    check("com.centurylinklabs.watchtower.enable=true" in compose, "compose is missing Watchtower enable label")
-    check("containrrr/watchtower" in compose, "compose must use the containrrr Watchtower image")
-    check("DOCKER_API_VERSION=1.44" in compose, "Watchtower must pin DOCKER_API_VERSION=1.44")
-    check("--interval 300" in compose, "Watchtower must check every 300 seconds")
-    check("com.centurylinklabs.watchtower.scope=esxtop" in compose, "Watchtower scope must be esxtop")
+    check("containrrr/" not in compose, "compose must not include a container auto-updater image")
+    check("/var/run/docker.sock" not in compose, "compose must not mount the Docker socket")
 
     workflow = (ROOT / ".github/workflows/docker-publish.yml").read_text(encoding="utf-8")
     check("packages: write" in workflow, "publish workflow lacks packages permission")

@@ -274,7 +274,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .monitor-foot { display: flex; justify-content: space-between; gap: .5rem; margin-top: .55rem; font-size: .6rem; color: var(--dim); }
 .monitor-foot .status-line { display: flex; gap: .3rem; align-items: center; }
 .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
-.dot.ok { background: var(--ok); box-shadow: 0 0 7px var(--ok); } .dot.warn { background: var(--warn); box-shadow: 0 0 7px var(--warn); } .dot.critical { background: var(--danger); box-shadow: 0 0 7px var(--danger); }
+.dot.ok { background: var(--ok); box-shadow: 0 0 7px var(--ok); } .dot.warn { background: var(--warn); box-shadow: 0 0 7px var(--warn); } .dot.critical { background: var(--danger); box-shadow: 0 0 7px var(--danger); } .dot.info { background: var(--accent); box-shadow: 0 0 7px var(--accent); } .dot.neutral { background: var(--muted); box-shadow: none; }
 
 .upload-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 1rem; align-items: stretch; }
 .card {

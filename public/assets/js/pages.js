@@ -287,12 +287,14 @@ function summaryHero(doc) {
           <span class="summary-count"><strong>${summary.warning || 0}</strong> warning</span>
           <span class="summary-count"><strong>${summary.info || 0}</strong> info</span>
           <span class="summary-count"><strong>${summary.counts?.ok || 0}</strong> within guardrail</span>
-          <span class="summary-count"><strong>${summary.counts?.neutral || 0}</strong> unruled</span>
+          <span class="summary-count"><strong>${summary.counts?.neutral || 0}</strong> no rule</span>
         </div>
-        <div class="status-key" aria-label="Colour legend">
-          <span><i class="dot ok"></i> green: inside guardrail</span>
-          <span><i class="dot warn"></i> yellow: review</span>
-          <span><i class="dot critical"></i> red: act</span>
+        <div class="status-key" aria-label="Status and colour legend">
+          <span><i class="dot ok"></i> green: healthy, inside guardrail</span>
+          <span><i class="dot warn"></i> yellow: warning, review</span>
+          <span><i class="dot critical"></i> red: critical, act</span>
+          <span><i class="dot info"></i> blue: informational rule</span>
+          <span><i class="dot neutral"></i> grey: no rule, no verdict</span>
         </div>
         <div class="summary-actions">
           <a class="btn btn-primary" href="#/insights">${icon('insights', 15)} Review findings</a>
