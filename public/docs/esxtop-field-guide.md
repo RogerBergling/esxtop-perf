@@ -34,6 +34,8 @@ esxtop -b -a -d 2 -n 100 | gzip -9c > /vmfs/volumes/SAS.-LOCAL/perf.csv
 | `gzip -9c` | Compress stdin at maximum level, write to stdout. | Saves datastore space, costs host CPU and makes the file binary. It will not open as plain text until decompressed. |
 | `> /vmfs/volumes/SAS.-LOCAL/perf.csv` | Shell redirect stdout into a datastore file. | Ensure free space and avoid writing to the datastore you are investigating. The name is misleading: the file is gzip, not CSV. |
 
+The in-app **Capture** command builder shows the nominal total window as `samples × interval`, in both minutes and seconds, as you change `-d` and `-n`. Actual elapsed time can be slightly longer because of capture overhead; the CSV timestamps are authoritative.
+
 ### Better capture examples
 
 Use a unique name that records the host and time:

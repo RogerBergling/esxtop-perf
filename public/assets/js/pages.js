@@ -1866,11 +1866,12 @@ export function renderCapture(ctx) {
               <option value="memory">Memory</option>
               <option value="network">Network</option>
             </select></label>
-            <label class="field"><span>Interval (seconds)</span><input class="input" id="capture-interval" type="number" value="5" min="2" step="1"></label>
-            <label class="field"><span>Samples (-n)</span><input class="input" id="capture-samples" type="number" value="60" min="1" step="1"></label>
+            <label class="field"><span>Interval (seconds)</span><input class="input" id="capture-interval" type="number" value="5" min="2" step="1"><small class="field-help">Delay between samples. The minimum is 2 seconds; 5 seconds is a practical default for most captures.</small></label>
+            <label class="field"><span>Samples (-n)</span><input class="input" id="capture-samples" type="number" value="60" min="1" step="1"><small class="field-help">Number of snapshots to collect. Nominal capture window = samples × interval.</small></label>
             <label class="field field-wide"><span>Output file</span><input class="input" id="capture-output" value="/vmfs/volumes/datastore1/esxtop-disk.csv" spellcheck="false"></label>
             <label class="check-field field-wide"><input id="capture-gzip" type="checkbox"> <span>Compress the output with <code>gzip -9c</code> (recommended for long captures)</span></label>
           </div>
+          <div class="capture-duration" id="capture-duration" aria-live="polite"></div>
           <div class="capture-hint" id="capture-panel-hint">Configure both <b>u</b> (Disk Device) and <b>d</b> (Disk Adapter) before pressing <b>W</b>.</div>
           <div class="command-preview">
             <div class="command-toolbar"><span>Batch command</span><button class="btn btn-sm btn-ghost" type="button" id="capture-copy">${icon('download', 13)} Copy</button></div>
@@ -2028,6 +2029,7 @@ head -1 /vmfs/volumes/datastore1/esxtop-test.csv \
       const gzip = root.querySelector('#capture-gzip');
       const command = root.querySelector('#capture-command');
       const hint = root.querySelector('#capture-panel-hint');
+      const duration = root.querySelector('#capture-duration');
       const warning = root.querySelector('#capture-warning');
       const shellQuote = (value) => /^[\w./:@%+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
       const panelLabels = {
@@ -2047,6 +2049,9 @@ head -1 /vmfs/volumes/datastore1/esxtop-test.csv \
         const samplesValue = Math.max(1, Number(samples.value) || 60);
         const finalOutput = gzip.checked && !outputPath.endsWith('.gz') ? `${outputPath}.gz` : outputPath;
         command.textContent = `esxtop -b -c ${shellQuote(configPath)} -d ${intervalValue} -n ${samplesValue}${gzip.checked ? ' | gzip -9c' : ''} > ${shellQuote(finalOutput)}`;
+        const totalSeconds = intervalValue * samplesValue;
+        const totalMinutes = totalSeconds / 60;
+        duration.innerHTML = `Estimated capture window: <strong>${formatNumber(totalMinutes, totalMinutes < 1 ? 2 : totalMinutes < 10 ? 1 : 0)} minutes</strong><span>${formatNumber(totalSeconds, 0)} seconds · ${samplesValue} samples × ${intervalValue}s interval</span><span class="dim">Nominal timing; the CSV timestamps are authoritative.</span>`;
         hint.innerHTML = panelLabels[panel.value] || panelLabels['disk-both'];
         warning.hidden = outputPath.startsWith('/vmfs/volumes/');
       };

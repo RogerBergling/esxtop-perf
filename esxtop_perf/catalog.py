@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-APP_VERSION = "1.8.2"
+APP_VERSION = "1.8.3"
 PARSER_VERSION = "1.4.0"
 
 REFERENCES: dict[str, dict[str, str]] = {

@@ -191,7 +191,7 @@ curl -i -H "X-ESXTOP-Upload-Password: YOUR_PASSWORD" \
 
 ```bash
 docker build \
-  --build-arg APP_VERSION=1.8.2 \
+  --build-arg APP_VERSION=1.8.3 \
   --build-arg IMAGE_TAG=local \
   --build-arg GIT_SHA="$(git rev-parse --short HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -348,7 +348,7 @@ Seven possible metric-category checkboxes — **CPU**, **Memory**, **Storage**, 
 
 Multi-host captures are detected from the host names in the PDH-CSV counter paths. Press **Generate report** after choosing the scope; HTML, PDF and CSV export buttons remain disabled until the visible report has been generated. The scoped detail includes host snapshots, host storage cards, VM summaries, per-virtual-disk storage latency/I/O, and VM memory/network cards. Only metrics present in the capture are rendered; a disabled field is omitted rather than shown as a dash. HTML and PDF use the chosen host/VM scope and categories; the filtered metrics CSV uses the selected categories.
 
-The app includes a step-by-step **Capture** page and command builder at `#/capture`. A detailed version is also in the [field guide](public/docs/esxtop-field-guide.md#focused-capture-with--c).
+The app includes a step-by-step **Capture** page and command builder at `#/capture`. The builder explains `-d` (interval between samples) and `-n` (number of samples) and shows the nominal capture window in minutes and seconds as you edit them. A detailed version is also in the [field guide](public/docs/esxtop-field-guide.md#focused-capture-with--c).
 
 Read the [field guide](public/docs/esxtop-field-guide.md) for the world/group model, every important CPU/memory/storage/network counter, the GAVG = DAVG + KAVG rule, practical threshold rationale and troubleshooting playbooks.
 
@@ -548,7 +548,7 @@ ghcr.io/rogerbergling/esxtop-perf
 | --- | --- |
 | Push to `main` | `latest`, `main`, `sha-<short>` |
 | Push to another branch | `<branch>`, `sha-<short>` |
-| Tag `v1.8.2` | `v1.8.2`, `sha-<short>` |
+| Tag `v1.8.3` | `v1.8.3`, `sha-<short>` |
 | Manual run | Tags for the selected ref |
 
 No repository secrets are required; the workflow uses `GITHUB_TOKEN`. A new GHCR package is private by default. Make it public once, or authenticate the host with `read:packages`.

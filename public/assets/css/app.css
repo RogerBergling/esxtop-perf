@@ -734,3 +734,8 @@ table.data tr.clickable:hover td.name a { text-decoration: underline; }
 
 .upload-password-field { margin-top: .65rem; }
 .upload-password-field small { color: var(--dim); font-size: .68rem; line-height: 1.45; }
+
+.field-help { font-size: .66rem; line-height: 1.45; color: var(--dim); }
+.capture-duration { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .75rem; margin-top: .7rem; padding: .55rem .7rem; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--accent) 5%, transparent); color: var(--text-soft); font-size: .76rem; }
+.capture-duration strong { color: var(--accent); font-size: .86rem; }
+.capture-duration span { font-size: .7rem; color: var(--muted); }
