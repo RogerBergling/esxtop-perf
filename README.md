@@ -7,11 +7,60 @@
 
 ESXtop Lens imports the PDH-CSV (or gzip) produced by `esxtop -b`, parses every counter, draws SVG time-series charts, applies transparent threshold rules, and explains what to check next with links to Broadcom and Yellow Bricks. It is a local-first troubleshooting workbench, not a monitoring platform.
 
-```
-esxtop -b -a -d 2 -n 100 | gzip -9c > /vmfs/volumes/SAS.-LOCAL/perf.csv
+## The easy way to get it running
+
+**What you need:** Docker with Docker Compose. You do **not** need Python, Node, a database, a build step, or a clone of this repository.
+
+### 1. Get the Compose file
+
+```bash
+curl -O https://raw.githubusercontent.com/RogerBergling/esxtop-perf/main/compose.yaml
 ```
 
-That file is actually gzip data despite the `.csv` extension. ESXtop Lens sniffs the magic bytes, so both plain CSV and gzip work under any filename.
+### 2. Start it
+
+```bash
+docker compose up -d
+```
+
+Docker pulls the prebuilt image from GHCR. If the package is still private, authenticate once with a token that has `read:packages`:
+
+```bash
+echo "$CR_PAT" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
+
+Then run `docker compose up -d` again.
+
+### 3. Open it and try it
+
+Open **http://localhost:8004** in your browser.
+
+- Click **Load demo capture** to explore the app immediately with synthetic data.
+- Or drag a real `.csv` / `.csv.gz` esxtop capture onto the import page.
+- Nothing is uploaded to a third party. The capture is processed by the local server and kept in a short-lived local session.
+
+Need a capture from an ESXi host? Run this on the host, then download the file:
+
+```bash
+esxtop -b -a -d 2 -n 100 | gzip -9c > /vmfs/volumes/datastore1/perf.csv
+```
+
+> **Local by default:** Compose publishes the app on `127.0.0.1` only. Before exposing it on a LAN or the internet, set `ESXTOP_UPLOAD_PASSWORD` and use HTTPS/reverse-proxy authentication. See [Upload password and public exposure](#upload-password-and-public-exposure).
+
+To stop it:
+
+```bash
+docker compose down
+```
+
+To update it deliberately:
+
+```bash
+docker compose pull
+docker compose up -d --force-recreate
+```
+
+That is the whole first-run path. The rest of this README is the detailed reference: local Python setup, security, capture internals, sizing, API, architecture and validation.
 
 ## Screenshots
 
@@ -34,9 +83,11 @@ Both screenshots use the bundled synthetic demo capture. The demo contains inten
 - **Local-only processing** — captures are parsed into a short-lived local session. No analytics, no third-party upload; the session is removed after 30 minutes or on restart. An optional upload password can be set before exposing the app beyond localhost.
 - **Docker + GHCR** — multi-arch image publishing; updates are deliberate (`docker compose pull`), with no Docker socket mounted and no automatic-update sidecar.
 
-## Quick start
+## Detailed setup
 
-### Docker (recommended)
+Use this section for local Python, custom builds, LAN access, troubleshooting, or the full first-run/update behavior. Capture files are often gzip data even when named `.csv`; ESXtop Lens detects gzip from the magic bytes, so both plain CSV and gzip work under any filename.
+
+### Docker
 
 ```bash
 curl -O https://raw.githubusercontent.com/RogerBergling/esxtop-perf/main/compose.yaml

@@ -122,7 +122,7 @@ def main() -> int:
     for marker in ("Field coverage and presence-aware views", "Present and zero", "Status semantics: Healthy, Warning, Critical, Info and No rule", "No rule", "vSAN requires vSAN to be enabled", "Application security and uploads", "ESXTOP_UPLOAD_PASSWORD", "Interrupts"):
         check(marker in guide, f"field guide missing field/security documentation: {marker}")
 
-    for phrase in ("Quick start", "Docker", "GHCR", "Validation", "Project structure"):
+    for phrase in ("The easy way to get it running", "Detailed setup", "Docker", "GHCR", "Validation", "Project structure"):
         check(phrase.lower() in readme.lower(), f"README is missing section/keyword: {phrase}")
     check("### Sizing large captures" in readme, "README lacks large-capture sizing guidance")
     check("peak memory ≈ 0.6 GB" in readme, "README lacks the memory sizing formula")
