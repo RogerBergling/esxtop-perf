@@ -57,6 +57,14 @@ def max_concurrent_analyses() -> int:
     return _int("ESXTOP_MAX_CONCURRENT_ANALYSES", 1)
 
 
+def max_concurrent_requests() -> int:
+    return _int("ESXTOP_MAX_CONCURRENT_REQUESTS", 32)
+
+
+def request_timeout_seconds() -> int:
+    return _int("ESXTOP_REQUEST_TIMEOUT_SECONDS", 120)
+
+
 def upload_password() -> str:
     """Return the optional upload password.
 
@@ -95,4 +103,6 @@ def public_limits() -> dict[str, int | str]:
         "maxRequestSeries": max_request_series(),
         "maxRequestCells": max_request_cells(),
         "maxConcurrentAnalyses": max_concurrent_analyses(),
+        "maxConcurrentRequests": max_concurrent_requests(),
+        "requestTimeoutSeconds": request_timeout_seconds(),
     }

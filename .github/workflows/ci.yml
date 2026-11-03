@@ -60,6 +60,9 @@ jobs:
       - name: Check every browser module
         run: find public/assets/js -name '*.js' -print0 | xargs -0 -n1 node --check
 
+      - name: Test CSV formula-injection protection
+        run: node scripts/test_csv_safety.mjs
+
       - name: Validate Markdown guide is present
         run: test -s public/docs/esxtop-field-guide.md
 
@@ -84,7 +87,7 @@ jobs:
           platforms: linux/amd64
           push: false
           build-args: |
-            APP_VERSION=1.8.0
+            APP_VERSION=1.8.1
             IMAGE_TAG=ci
             GIT_SHA=${{ github.sha }}
             BUILD_DATE=ci

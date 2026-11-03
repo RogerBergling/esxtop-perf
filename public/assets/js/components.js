@@ -331,10 +331,18 @@ export function safeJsonDownload(document) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+export function sanitizeCsvValue(value) {
+  const text = String(value ?? '');
+  const trimmed = text.replace(/^[\s\u0000]+/, '');
+  const isNegativeNumber = /^-\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(trimmed);
+  const dangerous = /^[=+@\t\r]/.test(trimmed) || (trimmed.startsWith('-') && !isNegativeNumber);
+  return dangerous ? `'${text}` : text;
+}
+
 export function csvDownload(filename, rows) {
   const content = rows.map((row) => row.map((cell) => {
-    const value = String(cell ?? '');
-    return /[",\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
+    const value = sanitizeCsvValue(cell);
+    return /[",\n\r]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
   }).join(',')).join('\n');
   const blob = new Blob([content], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);

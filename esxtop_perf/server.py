@@ -55,7 +55,17 @@ SECURITY_HEADERS = {
     "X-Frame-Options": "DENY",
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Resource-Policy": "same-origin",
+    "X-Robots-Tag": "noindex, nofollow",
 }
+
+BUSY_RESPONSE = (
+    b"HTTP/1.1 503 Service Unavailable\r\n"
+    b"Content-Type: application/json; charset=utf-8\r\n"
+    b"Content-Length: 0\r\n"
+    b"Retry-After: 5\r\n"
+    b"Connection: close\r\n"
+    b"\r\n"
+)
 
 SESSIONS = SessionStore()
 UPLOAD_PASSWORD_HEADER = "X-ESXTOP-Upload-Password"
@@ -64,6 +74,36 @@ ANALYSIS_SLOTS = threading.BoundedSemaphore(config.max_concurrent_analyses())
 
 def _json_bytes(document: dict) -> bytes:
     return json.dumps(document, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+
+
+class BoundedThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    """Threading server with a hard cap on simultaneous request handlers."""
+
+    daemon_threads = True
+
+    def __init__(self, *args, max_workers: int = 32, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._request_slots = threading.BoundedSemaphore(max(1, max_workers))
+
+    def process_request(self, request, client_address):
+        if not self._request_slots.acquire(blocking=False):
+            try:
+                request.sendall(BUSY_RESPONSE)
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
 
 
 def _analyze_file(path: str, filename: str) -> dict:
@@ -91,9 +131,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         ".csv": "text/csv; charset=utf-8",
         ".gz": "application/gzip",
     }
-    server_version = "ESXtopLens/" + APP_VERSION
+    server_version = "ESXtopLens"
     sys_version = ""
     protocol_version = "HTTP/1.1"
+    timeout = config.request_timeout_seconds()
+
+    def version_string(self) -> str:
+        return self.server_version
 
     def end_headers(self) -> None:
         self.send_header("Cache-Control", NO_CACHE)
@@ -119,10 +163,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json(
                 {
                     "status": "ok",
-                    "appVersion": APP_VERSION,
-                    "parserVersion": PARSER_VERSION,
                     "limits": config.public_limits(),
-                    "sessions": SESSIONS.stats(),
                     "demo": DEMO_FILE.exists(),
                     "uploadAuthRequired": config.upload_auth_required(),
                 }
@@ -227,6 +268,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json({"ok": False, "error": f"Invalid series request: {exc}"}, status=400)
         except SessionError as exc:
             self._send_json({"ok": False, "error": exc.message}, status=exc.status)
+        except TimeoutError:
+            self.close_connection = True
+            self._send_json({"ok": False, "error": "The series request timed out."}, status=408)
         except (BrokenPipeError, ConnectionResetError):
             return
         except Exception:
@@ -287,6 +331,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_bytes(payload, "application/json; charset=utf-8", compress=True)
         except CaptureError as exc:
             self._send_json({"ok": False, "error": exc.message}, status=exc.status)
+        except TimeoutError:
+            self.close_connection = True
+            self._send_json({"ok": False, "error": "The upload timed out while being read."}, status=408)
         except (BrokenPipeError, ConnectionResetError):
             return
         except Exception:
@@ -359,7 +406,11 @@ def main(argv: list[str] | None = None) -> int:
     port = choose_port(args.host, args.port)
     handler = lambda *a, **kw: Handler(*a, directory=str(WEB_ROOT), **kw)  # noqa: E731
     try:
-        server = http.server.ThreadingHTTPServer((args.host, port), handler)
+        server = BoundedThreadingHTTPServer(
+            (args.host, port),
+            handler,
+            max_workers=config.max_concurrent_requests(),
+        )
     except OSError as exc:
         print(f"Could not start the server: {exc}", file=sys.stderr)
         return 1

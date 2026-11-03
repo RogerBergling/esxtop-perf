@@ -634,6 +634,10 @@ A publicly reachable unauthenticated upload endpoint is still a risk: a large or
 
 Set `ESXTOP_UPLOAD_PASSWORD` to require a server-side password for `POST /api/analyze`. The import page shows a password field, keeps the value in `sessionStorage` for the current tab, and sends it as `X-ESXTOP-Upload-Password`. The comparison uses `hmac.compare_digest`; the password never appears in the frontend bundle or `/api/health`. The demo, static site and `/api/series` are not covered by this upload gate. The series endpoint uses a random session ID as a bearer capability.
 
+The built-in HTTP server bounds simultaneous request handlers and applies a read timeout; when the request limit is reached it returns `503` with `Retry-After`, and a stalled body read returns `408`. These are defence-in-depth limits, not a replacement for proxy-level connection, body and rate limiting.
+
+CSV exports neutralize spreadsheet formula injection. Text cells beginning with `=`, `+`, `@`, tab, carriage return, or a non-numeric `-` are prefixed with an apostrophe so that opening an export in Excel/LibreOffice does not execute a formula supplied by an untrusted capture. Legitimate negative numbers remain numeric. The `Server` response header no longer includes the application version, and the public health response exposes only operational limits and the upload-auth state, not session counts or build versions.
+
 Do not hardcode a password in HTML, JavaScript or a public repository. For internet exposure, use HTTPS, reverse-proxy authentication for the whole site, per-IP rate limiting, a strong random upload password, lower upload/memory limits, a read-only container, a bounded `/tmp`, and a non-root runtime. See the README section “Upload password and public exposure” for the deployment commands.
 
 ## 14. Primary references

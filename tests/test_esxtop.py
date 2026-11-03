@@ -36,6 +36,14 @@ class ConfigLimitTests(unittest.TestCase):
         with patch.dict(os.environ, {"ESXTOP_MAX_CONCURRENT_ANALYSES": ""}):
             self.assertEqual(config.max_concurrent_analyses(), 1)
 
+    def test_request_limits_are_configurable(self) -> None:
+        with patch.dict(os.environ, {"ESXTOP_MAX_CONCURRENT_REQUESTS": "12", "ESXTOP_REQUEST_TIMEOUT_SECONDS": "45"}):
+            self.assertEqual(config.max_concurrent_requests(), 12)
+            self.assertEqual(config.request_timeout_seconds(), 45)
+        with patch.dict(os.environ, {"ESXTOP_MAX_CONCURRENT_REQUESTS": "", "ESXTOP_REQUEST_TIMEOUT_SECONDS": ""}):
+            self.assertEqual(config.max_concurrent_requests(), 32)
+            self.assertEqual(config.request_timeout_seconds(), 120)
+
     def test_upload_password_gate(self) -> None:
         with patch.dict(os.environ, {"ESXTOP_UPLOAD_PASSWORD": "correct horse battery staple"}):
             self.assertTrue(config.upload_auth_required())

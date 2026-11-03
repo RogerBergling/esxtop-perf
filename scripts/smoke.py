@@ -87,6 +87,15 @@ class SmokeTests(unittest.TestCase):
         self.assertIn("no-store", response.headers.get("Cache-Control", ""))
         health = json.loads(self.get("/api/health").read().decode("utf-8"))
         self.assertFalse(health["uploadAuthRequired"])
+        self.assertNotIn("appVersion", health)
+        self.assertNotIn("parserVersion", health)
+        self.assertNotIn("sessions", health)
+        self.assertEqual(response.headers.get("Server"), "ESXtopLens")
+        self.assertEqual(response.headers.get("X-Robots-Tag"), "noindex, nofollow")
+        head = urllib.request.Request(f"{self.base}/api/health", method="HEAD")
+        head_response = self.opener.open(head, timeout=20)
+        self.assertEqual(head_response.headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertIn("default-src 'self'", head_response.headers.get("Content-Security-Policy", ""))
 
     def test_assets_and_guide(self) -> None:
         for path, expected in [

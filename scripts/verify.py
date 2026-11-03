@@ -146,8 +146,12 @@ def main() -> int:
     check("ghcr.io/rogerbergling/esxtop-perf:latest" in compose, "compose does not use the GHCR image")
     check('ESXTOP_UPLOAD_PASSWORD' in compose, "compose does not pass ESXTOP_UPLOAD_PASSWORD")
     check('ESXTOP_MAX_CONCURRENT_ANALYSES' in compose, "compose does not pass ESXTOP_MAX_CONCURRENT_ANALYSES")
+    check('ESXTOP_MAX_CONCURRENT_REQUESTS' in compose, "compose does not pass ESXTOP_MAX_CONCURRENT_REQUESTS")
+    check('ESXTOP_REQUEST_TIMEOUT_SECONDS' in compose, "compose does not pass ESXTOP_REQUEST_TIMEOUT_SECONDS")
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
     check("ESXTOP_UPLOAD_PASSWORD" in env_example, ".env.example lacks ESXTOP_UPLOAD_PASSWORD")
+    check("ESXTOP_MAX_CONCURRENT_REQUESTS" in env_example, ".env.example lacks ESXTOP_MAX_CONCURRENT_REQUESTS")
+    check("ESXTOP_REQUEST_TIMEOUT_SECONDS" in env_example, ".env.example lacks ESXTOP_REQUEST_TIMEOUT_SECONDS")
     check("containrrr/" not in compose, "compose must not include a container auto-updater image")
     check("/var/run/docker.sock" not in compose, "compose must not mount the Docker socket")
 
@@ -155,6 +159,8 @@ def main() -> int:
     check("packages: write" in workflow, "publish workflow lacks packages permission")
     check("linux/amd64,linux/arm64" in workflow, "publish workflow should build multi-arch")
     check("secrets.GITHUB_TOKEN" in workflow, "publish workflow should use GITHUB_TOKEN")
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    check("node scripts/test_csv_safety.mjs" in ci, "CI does not run the CSV safety test")
 
     # A few frontend route smoke assertions are cheap and catch accidental drift.
     app_js = (ROOT / "public/assets/js/app.js").read_text(encoding="utf-8")
@@ -162,10 +168,10 @@ def main() -> int:
         check(marker in app_js, f"app.js missing route/feature marker: {marker}")
 
     config_py = (ROOT / "esxtop_perf/config.py").read_text(encoding="utf-8")
-    for marker in ("ESXTOP_UPLOAD_PASSWORD", "upload_auth_required", "verify_upload_password", "hmac.compare_digest", "max_concurrent_analyses"):
+    for marker in ("ESXTOP_UPLOAD_PASSWORD", "upload_auth_required", "verify_upload_password", "hmac.compare_digest", "max_concurrent_analyses", "max_concurrent_requests", "request_timeout_seconds"):
         check(marker in config_py, f"config.py missing upload-password marker: {marker}")
     server_py = (ROOT / "esxtop_perf/server.py").read_text(encoding="utf-8")
-    for marker in ("UPLOAD_PASSWORD_HEADER", "_upload_auth_ok", "uploadAuthRequired", "status=401", "ANALYSIS_SLOTS", "status=429"):
+    for marker in ("UPLOAD_PASSWORD_HEADER", "_upload_auth_ok", "uploadAuthRequired", "status=401", "ANALYSIS_SLOTS", "status=429", "BoundedThreadingHTTPServer", "BUSY_RESPONSE", "request_timeout_seconds", "X-Robots-Tag"):
         check(marker in server_py, f"server.py missing upload-password marker: {marker}")
 
     parser_py = (ROOT / "esxtop_perf/parser.py").read_text(encoding="utf-8")

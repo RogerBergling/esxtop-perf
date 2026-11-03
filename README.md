@@ -179,7 +179,7 @@ The upload password protects **file upload**, not the entire application. The bu
 
 ```bash
 docker build \
-  --build-arg APP_VERSION=1.8.0 \
+  --build-arg APP_VERSION=1.8.1 \
   --build-arg IMAGE_TAG=local \
   --build-arg GIT_SHA="$(git rev-parse --short HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -423,6 +423,8 @@ The current all-metric defaults admit captures up to 200,000 metric columns:
 | Session TTL | 30 minutes | `ESXTOP_SESSION_TTL_MINUTES` |
 | Concurrent sessions | 4 | `ESXTOP_MAX_SESSIONS` |
 | Concurrent upload analyses | 1 | `ESXTOP_MAX_CONCURRENT_ANALYSES` |
+| Concurrent HTTP requests | 32 | `ESXTOP_MAX_CONCURRENT_REQUESTS` |
+| Request read timeout | 120 seconds | `ESXTOP_REQUEST_TIMEOUT_SECONDS` |
 | Series per value request | 200 | `ESXTOP_MAX_REQUEST_SERIES` |
 | Cells per value request | 5,000,000 | `ESXTOP_MAX_REQUEST_CELLS` |
 | Upload password | unset (no gate) | `ESXTOP_UPLOAD_PASSWORD` |
@@ -430,6 +432,10 @@ The current all-metric defaults admit captures up to 200,000 metric columns:
 When `ESXTOP_UPLOAD_PASSWORD` is set, `POST /api/analyze` requires the matching `X-ESXTOP-Upload-Password` header. The browser import page prompts for it and keeps it in `sessionStorage` for the tab. The password is compared server-side with a constant-time comparison and is never embedded in the frontend bundle.
 
 Only `ESXTOP_MAX_CONCURRENT_ANALYSES` uploads are parsed at once (default **1**). A second upload receives **429** rather than competing for memory with a large analysis. Raise this only when the container has enough RAM and `/tmp` for multiple simultaneous captures.
+
+The HTTP server is also bounded by `ESXTOP_MAX_CONCURRENT_REQUESTS` and a read timeout of `ESXTOP_REQUEST_TIMEOUT_SECONDS`. When all request slots are in use it returns **503** with `Retry-After: 5`; a stalled client read returns **408** and releases the analysis slot. These limits reduce slowloris-style connection exhaustion, but a reverse proxy should still enforce its own connection, body and rate limits.
+
+CSV exports deliberately neutralize spreadsheet formula injection: text cells beginning with `=`, `+`, `@`, tab, carriage return, or a non-numeric `-` are prefixed with an apostrophe. Legitimate negative numbers remain numeric. The browser-side regression test is `node scripts/test_csv_safety.mjs`.
 
 These are safety settings, not esxtop limits. Increase them for a larger single-user box; lower them for an exposed/multi-user deployment. The browser does **not** receive all sample arrays up front. Only metadata, statistics and findings are sent initially; charts fetch their visible series from `/api/series`, and the session database is deleted after the TTL or server shutdown.
 
@@ -479,13 +485,13 @@ services:
 | Endpoint | Method | Description |
 | --- | --- | --- |
 | `/` | GET | App shell |
-| `/api/health` | GET | Version, limits, health and whether the upload password gate is enabled |
+| `/api/health` | GET | Limits, health and whether the upload password gate is enabled |
 | `/api/demo` | GET | Bundled synthetic analysis |
 | `/api/analyze?name=...` | POST | Raw CSV/gzip body; returns metadata, stats, findings and a session ID. Requires `X-ESXTOP-Upload-Password` when the gate is enabled. |
 | `/api/series` | POST | `{session, ids}`; returns only the requested sample arrays. The random session ID is a bearer capability. |
 | `/version.json` | GET | Build metadata |
 
-The server sends `Content-Encoding: gzip` when the client accepts it, `Cache-Control: no-store`, CSP and related security headers. There is no CORS surface and no permanent database. Series sessions are temporary SQLite files in `/tmp`; override the location with `ESXTOP_SESSION_DIR` only if that path is private. Upload authentication deliberately fails closed for `POST /api/analyze` when `ESXTOP_UPLOAD_PASSWORD` is set and the header is missing or wrong; an incorrect password is indistinguishable from a missing one in the 401 response.
+The server sends `Content-Encoding: gzip` when the client accepts it, `Cache-Control: no-store`, CSP and related security headers. API `HEAD` responses carry the same protection headers, the `Server` header no longer discloses the application version, and `/api/health` no longer exposes session counts or build versions. There is no CORS surface and no permanent database. Series sessions are temporary SQLite files in `/tmp`; override the location with `ESXTOP_SESSION_DIR` only if that path is private. Upload authentication deliberately fails closed for `POST /api/analyze` when `ESXTOP_UPLOAD_PASSWORD` is set and the header is missing or wrong; an incorrect password is indistinguishable from a missing one in the 401 response.
 
 ## Validation
 
@@ -495,6 +501,7 @@ python3 scripts/verify.py
 python3 -m unittest discover -s tests -v
 python3 scripts/smoke.py
 find public/assets/js -name '*.js' -print0 | xargs -0 -n1 node --check
+node scripts/test_csv_safety.mjs
 ```
 
 The tests cover:
@@ -509,8 +516,10 @@ The tests cover:
 - interrupt-category and vSAN-disabled observations;
 - presence-aware UI/report behaviour (verified in browser-based validation, not only unit tests);
 - temporary session storage and lazy series retrieval;
-- HTTP shell, CSP, static assets, field guide, demo and real gzip upload;
-- upload-password rejection and acceptance, including the server-side 401 gate.
+- HTTP shell, CSP, security headers, API HEAD headers, static assets, field guide, demo and real gzip upload;
+- upload-password rejection and acceptance, including the server-side 401 gate;
+- CSV formula-injection neutralization and safe negative-number preservation;
+- bounded request concurrency and read-timeout configuration.
 
 CI runs Python 3.10 and 3.12, JavaScript syntax checks, the smoke test and a Docker build on every push/PR.
 
@@ -526,7 +535,7 @@ ghcr.io/rogerbergling/esxtop-perf
 | --- | --- |
 | Push to `main` | `latest`, `main`, `sha-<short>` |
 | Push to another branch | `<branch>`, `sha-<short>` |
-| Tag `v1.8.0` | `v1.8.0`, `sha-<short>` |
+| Tag `v1.8.1` | `v1.8.1`, `sha-<short>` |
 | Manual run | Tags for the selected ref |
 
 No repository secrets are required; the workflow uses `GITHUB_TOKEN`. A new GHCR package is private by default. Make it public once, or authenticate the host with `read:packages`.
