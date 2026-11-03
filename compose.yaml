@@ -8,7 +8,10 @@ services:
     mem_reservation: 256m
     memswap_limit: 2g           # same as mem_limit = no swap
     ports:
-      - "8004:8080"
+      # Loopback-only by default. To expose on the LAN, set
+      # ESXTOP_UPLOAD_PASSWORD in .env, change this to "8004:8080", and put
+      # HTTPS/reverse-proxy authentication in front. See README.
+      - "127.0.0.1:8004:8080"
     restart: unless-stopped
     pull_policy: always
     read_only: true
@@ -22,6 +25,10 @@ services:
       ESXTOP_MAX_ROWS: "${ESXTOP_MAX_ROWS:-50000}"
       ESXTOP_SESSION_TTL_MINUTES: "${ESXTOP_SESSION_TTL_MINUTES:-30}"
       ESXTOP_MAX_SESSIONS: "${ESXTOP_MAX_SESSIONS:-4}"
+      ESXTOP_MAX_CONCURRENT_ANALYSES: "${ESXTOP_MAX_CONCURRENT_ANALYSES:-1}"
+      # Leave empty for a private instance. Set a strong value in .env before
+      # exposing the upload page outside localhost/LAN.
+      ESXTOP_UPLOAD_PASSWORD: "${ESXTOP_UPLOAD_PASSWORD:-}"
     security_opt:
       - no-new-privileges:true
     cap_drop:

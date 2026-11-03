@@ -8,7 +8,10 @@ import {
   formatDuration,
   formatMetric,
   formatNumber,
+  hasMetric,
+  hasVcpuSeries,
   icon,
+  isVcpuWorld,
   metricById,
   metricRoute,
   pill,
@@ -69,6 +72,12 @@ const CATEGORY_META = {
     eyebrow: 'Consumption and caps',
     description: 'Observed power usage and configured power caps. A host pinned at its cap for sustained periods may be power-limited.',
     icon: 'server',
+  },
+  interrupt: {
+    title: 'Interrupts',
+    eyebrow: 'Host interrupt activity',
+    description: 'Interrupt cookie rates and processing time. Use this panel to spot a driver, NIC, HBA or storage-controller interrupt storm, then correlate it with CPU time and the affected device.',
+    icon: 'alert',
   },
   other: {
     title: 'Other signals',
@@ -310,13 +319,20 @@ function captureTabs(doc, active = 'overview') {
     ['memory', 'Memory', 'memory'],
     ['storage', 'Storage', 'disk'],
     ['network', 'Network', 'network'],
+    ['power', 'Power', 'server'],
+    ['interrupt', 'Interrupts', 'alert'],
     ['vms', 'Virtual machines', 'server'],
     ['insights', 'Insights', 'insights'],
     ['report', 'Report', 'file'],
     ['metrics', 'All metrics', 'table'],
   ];
+  const visibleTabs = tabs.filter(([route]) => {
+    if (route === 'vms') return true;
+    if (!['cpu', 'memory', 'storage', 'network', 'power', 'interrupt'].includes(route)) return true;
+    return (counts[route]?.series || 0) > 0;
+  });
   return `<div class="category-tabs">
-    ${tabs.map(([route, label, iconName]) => {
+    ${visibleTabs.map(([route, label, iconName]) => {
       const count = counts[route]?.series;
       const activeClass = route === active ? ' active' : '';
       return `<a class="category-tab${activeClass}" href="#/${route}">${icon(iconName, 14)} ${esc(label)}${count ? `<span class="tab-count">${count}</span>` : ''}</a>`;
@@ -386,7 +402,7 @@ function findingCard(finding, options = {}) {
 }
 
 function categoryToneClass(category) {
-  return ({ cpu: 'accent', memory: 'violet', storage: 'warn', network: 'ok', power: 'orange' })[category] || '';
+  return ({ cpu: 'accent', memory: 'violet', storage: 'warn', network: 'ok', power: 'orange', interrupt: 'danger' })[category] || '';
 }
 
 function escapeHtmlSafe(value) {
@@ -397,67 +413,106 @@ function emptyState(title, detail) {
   return `<div class="empty-state"><strong>${esc(title)}</strong>${esc(detail || '')}</div>`;
 }
 
+function vmColumns(doc) {
+  const columns = [{
+    header: 'Virtual machine',
+    className: '',
+    cell: (vm) => `<td class="name"><a href="${escapeAttr(vmRoute(vm.name))}">${esc(vm.name)}</a><span class="sub">${vm.findings.length ? `${vm.findings.length} finding${vm.findings.length === 1 ? '' : 's'}` : 'no findings'}</span></td>`,
+  }];
+  if (hasVcpuSeries(doc)) {
+    columns.push({ header: 'vCPU', className: 'num', cell: (vm) => `<td class="num">${vm.vcpus ?? '—'}</td>` });
+  }
+  if (hasMetric(doc, 'MEMSZ')) {
+    columns.push({ header: 'Memory', className: 'num', cell: (vm) => `<td class="num">${vm.configuredMemory !== null ? formatMetric(vm.configuredMemory, 'MB') : '—'}</td>` });
+  }
+  if (hasMetric(doc, '%USED')) {
+    columns.push({ header: 'CPU used', className: 'num', cell: (vm) => `<td class="num">${formatMetric(vm.cpuUsed?.stats?.p95, '%')}</td>` });
+  }
+  if (hasMetric(doc, '%RDY')) {
+    columns.push({
+      header: '%RDY',
+      className: 'num',
+      cell: (vm) => `<td class="num ${vm.ready?.status === 'critical' ? 'status-text-critical' : vm.ready?.status === 'warn' ? 'status-text-warn' : ''}">${formatMetric(vm.ready?.stats?.p95, '%')}</td>`,
+    });
+  }
+  if (hasMetric(doc, '%MLMTD')) columns.push({ header: '%MLMTD', className: 'num', cell: (vm) => `<td class="num">${formatMetric(vm.mlmtd?.stats?.p95, '%')}</td>` });
+  if (hasMetric(doc, '%CSTP')) columns.push({ header: '%CSTP', className: 'num', cell: (vm) => `<td class="num">${formatMetric(vm.cstop?.stats?.p95, '%')}</td>` });
+  if (hasMetric(doc, 'MCTLSZ')) columns.push({ header: 'Balloon', className: 'num', cell: (vm) => `<td class="num">${formatMetric(vm.balloon?.stats?.p95, 'MB')}</td>` });
+  if (hasMetric(doc, 'SWCUR')) columns.push({ header: 'Swap', className: 'num', cell: (vm) => `<td class="num">${formatMetric(vm.swap?.stats?.p95, 'MB')}</td>` });
+  if (['GAVG/cmd', 'LAT/rd', 'LAT/wr', 'VSCSI_LATENCY'].some((metric) => hasMetric(doc, metric))) columns.push({ header: 'Storage latency', className: 'num', cell: (vm) => `<td class="num">${formatMetric(vm.disk?.stats?.p95, vm.disk?.unit || 'ms')}</td>` });
+  columns.push({ header: 'Status', className: '', cell: (vm) => `<td>${statusBadge(vm.status)}</td>` });
+  return columns;
+}
+
+function vmTableHead(doc) {
+  return `<thead><tr>${vmColumns(doc).map((column) => `<th${column.className ? ` class="${column.className}"` : ''}>${esc(column.header)}</th>`).join('')}</tr></thead>`;
+}
+
 function vmTable(doc, limit = 200) {
   const summaries = (doc.vms || []).map((name) => vmSummary(doc, name))
-    .sort((left, right) => statusRank(right.status) - statusRank(left.status) || (Number(right.ready?.stats?.p95) || 0) - (Number(left.ready?.stats?.p95) || 0));
+    .sort((left, right) => statusRank(right.status) - statusRank(left.status) || (Number(right.ready?.stats?.p95) || Number(right.cpuUsed?.stats?.p95) || 0) - (Number(left.ready?.stats?.p95) || Number(left.cpuUsed?.stats?.p95) || 0));
   if (!summaries.length) return emptyState('No VM groups found', 'Capture with the CPU, memory and disk panels enabled, or use -a.');
-  const rows = summaries.slice(0, limit).map((vm) => `
-    <tr>
-      <td class="name"><a href="${escapeAttr(vmRoute(vm.name))}">${esc(vm.name)}</a><span class="sub">${vm.findings.length ? `${vm.findings.length} finding${vm.findings.length === 1 ? '' : 's'}` : 'no findings'}</span></td>
-      <td class="num">${vm.vcpus ?? '—'}</td>
-      <td class="num">${vm.configuredMemory !== null ? formatMetric(vm.configuredMemory, 'MB') : '—'}</td>
-      <td class="num">${formatMetric(vm.cpuUsed?.stats?.p95, '%')}</td>
-      <td class="num ${vm.ready?.status === 'critical' ? 'status-text-critical' : vm.ready?.status === 'warn' ? 'status-text-warn' : ''}">${formatMetric(vm.ready?.stats?.p95, '%')}</td>
-      <td class="num">${formatMetric(vm.mlmtd?.stats?.p95, '%')}</td>
-      <td class="num">${formatMetric(vm.cstop?.stats?.p95, '%')}</td>
-      <td class="num">${formatMetric(vm.balloon?.stats?.p95, 'MB')}</td>
-      <td class="num">${formatMetric(vm.swap?.stats?.p95, 'MB')}</td>
-      <td class="num">${formatMetric(vm.disk?.stats?.p95, 'ms')}</td>
-      <td>${statusBadge(vm.status)}</td>
-    </tr>`).join('');
+  const rows = summaries.slice(0, limit).map((vm) => vmRowHtml(doc, vm)).join('');
   return `<div class="table-wrap"><table class="data">
-    <thead><tr><th>Virtual machine</th><th class="num">vCPU</th><th class="num">Memory</th><th class="num">CPU used</th><th class="num">%RDY</th><th class="num">%MLMTD</th><th class="num">%CSTP</th><th class="num">Balloon</th><th class="num">Swap</th><th class="num">GAVG</th><th>Status</th></tr></thead>
+    ${vmTableHead(doc)}
     <tbody>${rows}</tbody>
   </table></div>${summaries.length > limit ? `<p class="chart-note">Showing ${limit} of ${summaries.length} VMs. Use All metrics or filter by VM to narrow the view.</p>` : ''}`;
 }
 
 function hostCpuRows(doc) {
-  const candidates = ['PCPU %', 'PCPU_UTIL', 'CORE_UTIL']
-    .map((metric) => ({ metric, series: seriesByMetric(doc, metric).filter((series) => series.scope === 'host') }))
-    .find((item) => item.series.length);
-  if (!candidates) return [];
+  const metricIds = ['PCPU %', 'PCPU_UTIL', 'CORE_UTIL'].filter((metric) => hasMetric(doc, metric));
+  if (!metricIds.length) return { metricIds: [], rows: [] };
+  const physical = (doc.series || []).filter((series) => (
+    series.scope === 'host' &&
+    series.kind === 'numeric' &&
+    metricIds.includes(series.metric) &&
+    String(series.group || '').toLowerCase().startsWith('physical cpu')
+  ));
+  const source = physical.length ? physical : (doc.series || []).filter((series) => (
+    series.scope === 'host' &&
+    series.kind === 'numeric' &&
+    metricIds.includes(series.metric) &&
+    String(series.group || '').toLowerCase().startsWith('numa node')
+  ));
   const groups = new Map();
-  for (const series of candidates.series) {
+  for (const series of source) {
     const key = series.instance || series.entity;
-    const current = groups.get(key);
-    if (!current || statusRank(series.status) > statusRank(current.status)) groups.set(key, series);
+    let row = groups.get(key);
+    if (!row) {
+      row = { key, series: {} };
+      groups.set(key, row);
+    }
+    row.series[series.metric] = series;
   }
-  return [...groups.values()].sort((left, right) => {
-    if (left.instance === '_Total') return -1;
-    if (right.instance === '_Total') return 1;
-    return String(left.instance).localeCompare(String(right.instance), undefined, { numeric: true });
+  const rows = [...groups.values()].sort((left, right) => {
+    if (left.key === '_Total') return -1;
+    if (right.key === '_Total') return 1;
+    return String(left.key).localeCompare(String(right.key), undefined, { numeric: true });
   });
+  return { metricIds, rows };
 }
 
 function hostCpuTable(doc) {
-  const rows = hostCpuRows(doc);
+  const { metricIds, rows } = hostCpuRows(doc);
   if (!rows.length) return emptyState('No host CPU counters found', 'The capture does not contain Physical Cpu counters.');
   return `<div class="table-wrap"><table class="data">
-    <thead><tr><th>Physical CPU</th><th class="num">Avg</th><th class="num">P95</th><th class="num">Peak</th><th class="num">Samples</th><th>Status</th></tr></thead>
-    <tbody>${rows.map((series) => `<tr>
-      <td class="name"><a href="${escapeAttr(seriesRoute(series.id))}">${esc(series.instance || series.entity)}</a><span class="sub">${esc(series.counter)}</span></td>
-      <td class="num">${formatMetric(series.stats?.avg, series.unit)}</td>
-      <td class="num">${formatMetric(series.stats?.p95, series.unit)}</td>
-      <td class="num">${formatMetric(series.stats?.max, series.unit)}</td>
-      <td class="num">${series.stats?.count ?? 0}</td>
-      <td>${statusBadge(series.status)}</td>
-    </tr>`).join('')}</tbody>
+    <thead><tr><th>Physical CPU</th>${metricIds.map((metric) => `<th class="num">${esc(metric)} P95</th>`).join('')}<th>Status</th></tr></thead>
+    <tbody>${rows.map((row) => {
+      const first = metricIds.map((metric) => row.series[metric]).find(Boolean);
+      const status = worstStatus(Object.values(row.series).map((series) => series.status));
+      return `<tr>
+        <td class="name"><a href="${escapeAttr(seriesRoute(first?.id || ''))}">${esc(row.key || 'CPU')}</a><span class="sub">${esc(first?.counter || '')}</span></td>
+        ${metricIds.map((metric) => `<td class="num">${formatMetric(row.series[metric]?.stats?.p95, row.series[metric]?.unit || '%')}</td>`).join('')}
+        <td>${statusBadge(status)}</td>
+      </tr>`;
+    }).join('')}</tbody>
   </table></div>`;
 }
 
 function vmVcpuTable(doc, vmName) {
-  const list = vmSeries(doc, vmName).filter((series) => series.group?.toLowerCase().startsWith('vcpu'));
+  const list = vmSeries(doc, vmName).filter((series) => isVcpuWorld(series));
   if (!list.length) return emptyState('No per-vCPU counters found', 'Group-level CPU counters can hide one starved vCPU. Capture Vcpu metrics for per-world detail.');
+  const metricIds = ['%USED', '%RDY', '%MLMTD', '%CSTP', '%SWPWT'].filter((metric) => list.some((series) => series.metric === metric));
   const worlds = new Map();
   for (const series of list) {
     const key = series.world || series.instance;
@@ -469,21 +524,12 @@ function vmVcpuTable(doc, vmName) {
     row.series[series.metric] = series;
   }
   return `<div class="table-wrap"><table class="data">
-    <thead><tr><th>vCPU world</th><th class="num">%USED</th><th class="num">%RDY</th><th class="num">%MLMTD</th><th class="num">%CSTP</th><th class="num">%SWPWT</th><th>Status</th></tr></thead>
+    <thead><tr><th>vCPU world</th>${metricIds.map((metric) => `<th class="num">${esc(metric)}</th>`).join('')}<th>Status</th></tr></thead>
     <tbody>${[...worlds.values()].map((row) => {
-      const used = row.series['%USED'];
-      const ready = row.series['%RDY'];
-      const mlmtd = row.series['%MLMTD'];
-      const cstop = row.series['%CSTP'];
-      const swapwait = row.series['%SWPWT'];
       const status = worstStatus(Object.values(row.series).map((series) => series.status));
       return `<tr>
         <td class="name">${esc(row.key || 'vCPU')}</td>
-        <td class="num">${formatMetric(used?.stats?.p95, '%')}</td>
-        <td class="num">${formatMetric(ready?.stats?.p95, '%')}</td>
-        <td class="num">${formatMetric(mlmtd?.stats?.p95, '%')}</td>
-        <td class="num">${formatMetric(cstop?.stats?.p95, '%')}</td>
-        <td class="num">${formatMetric(swapwait?.stats?.p95, '%')}</td>
+        ${metricIds.map((metric) => `<td class="num">${formatMetric(row.series[metric]?.stats?.p95, row.series[metric]?.unit || '%')}</td>`).join('')}
         <td>${statusBadge(status)}</td>
       </tr>`;
     }).join('')}</tbody>
@@ -491,18 +537,31 @@ function vmVcpuTable(doc, vmName) {
 }
 
 function hostMemoryTable(doc) {
-  const wanted = ['MACHINE_MB', 'FREE_MB', 'OVERCOMMIT1', 'SWAP_USED_MB', 'SWAP_READ', 'SWAP_WRITE', 'MEMCTL_CURRENT_MB', 'COMPRESSED_MB'];
-  const rows = wanted.map((metric) => worstBy(doc, metric, (series) => series.scope === 'host')).filter(Boolean);
+  const map = new Map();
+  for (const series of doc.series || []) {
+    if (series.scope !== 'host' || series.category !== 'memory' || series.kind !== 'numeric') continue;
+    const group = String(series.group || '').toLowerCase();
+    if (!(group === 'memory' || group.startsWith('numa node') || group.startsWith('group memory'))) continue;
+    const key = `${series.group}|${series.instance}|${series.metric}|${series.counter}`;
+    if (!map.has(key)) map.set(key, series);
+  }
+  const rows = [...map.values()].sort((left, right) => (
+    String(left.group).localeCompare(String(right.group)) ||
+    String(left.instance || '').localeCompare(String(right.instance || ''), undefined, { numeric: true }) ||
+    metricName(doc, left).localeCompare(metricName(doc, right))
+  ));
   if (!rows.length) return emptyState('No host memory counters found', 'The capture does not contain the host Memory panel.');
+  const visibleRows = rows.slice(0, 250);
   return `<div class="table-wrap"><table class="data">
-    <thead><tr><th>Host signal</th><th class="num">Last</th><th class="num">P95</th><th class="num">Status</th></tr></thead>
-    <tbody>${rows.map((series) => `<tr>
-      <td class="name"><a href="${escapeAttr(seriesRoute(series.id))}">${esc(metricName(doc, series))}</a><span class="sub">${esc(series.counter)}</span></td>
+    <thead><tr><th>Host signal</th><th>Group / instance</th><th class="num">Last</th><th class="num">P95</th><th>Status</th></tr></thead>
+    <tbody>${visibleRows.map((series) => `<tr>
+      <td class="name"><a href="${escapeAttr(seriesRoute(series.id))}">${esc(metricName(doc, series))}</a><span class="sub">${esc(series.metric)}${series.counter ? ` · ${esc(series.counter)}` : ''}</span></td>
+      <td>${esc(series.group)}${series.instance ? `<span class="sub">${esc(series.instance)}</span>` : ''}</td>
       <td class="num">${formatMetric(series.stats?.last, series.unit)}</td>
       <td class="num">${formatMetric(series.stats?.p95, series.unit)}</td>
       <td>${statusBadge(series.status)}</td>
     </tr>`).join('')}</tbody>
-  </table></div>`;
+  </table></div>${rows.length > visibleRows.length ? `<p class="chart-note">Showing ${visibleRows.length} of ${rows.length} host-memory series. Use <a href="#/metrics?category=memory">All metrics</a> for the complete list.</p>` : ''}`;
 }
 
 function storageRows(doc) {
@@ -518,31 +577,50 @@ function storageRows(doc) {
       row.series[series.metric] = series;
     }
   }
-  return [...map.values()].sort((left, right) => (
-    (Number(right.series['GAVG/cmd']?.stats?.p95) || 0) - (Number(left.series['GAVG/cmd']?.stats?.p95) || 0)
-  )).slice(0, 120);
+  const latencyOrder = ['GAVG/cmd', 'DAVG/cmd', 'KAVG/cmd', 'QAVG/cmd', 'LAT/rd', 'LAT/wr', 'VSCSI_LATENCY'];
+  const rowLatency = (row) => {
+    for (const metric of latencyOrder) {
+      const series = row.series[metric];
+      if (series) return Number(series.stats?.p95) || 0;
+    }
+    return 0;
+  };
+  return [...map.values()]
+    .filter((row) => Object.keys(row.series).some((metric) => metric !== 'VSAN_ENABLED'))
+    .sort((left, right) => rowLatency(right) - rowLatency(left) || (Number(right.series['CMDS/s']?.stats?.p95) || 0) - (Number(left.series['CMDS/s']?.stats?.p95) || 0));
 }
 
 function storageTable(doc) {
   const rows = storageRows(doc);
-  if (!rows.length) return emptyState('No storage counters found', 'The capture does not contain disk adapter, device or virtual disk metrics.');
+  if (!rows.length) return categorySeriesTable(doc, 'storage');
+  const columns = [
+    ['GAVG/cmd', 'Guest latency'],
+    ['DAVG/cmd', 'Device latency'],
+    ['KAVG/cmd', 'VMkernel latency'],
+    ['QAVG/cmd', 'Queue latency'],
+    ['LAT/rd', 'Read latency'],
+    ['LAT/wr', 'Write latency'],
+    ['VSCSI_LATENCY', 'Virtual disk latency'],
+    ['QUED', 'Queued'],
+    ['ACTV', 'Active'],
+    ['%USD', 'Queue used'],
+    ['CMDS/s', 'IOPS'],
+    ['MBREAD/s', 'MB read/s'],
+    ['MBWRTN/s', 'MB write/s'],
+  ].filter(([metric]) => hasMetric(doc, metric));
+  if (!columns.length) return categorySeriesTable(doc, 'storage');
   return `<div class="table-wrap"><table class="data">
-    <thead><tr><th>Entity</th><th class="num">GAVG</th><th class="num">DAVG</th><th class="num">KAVG</th><th class="num">QUED</th><th class="num">CMDS/s</th><th>Status</th></tr></thead>
+    <thead><tr><th>Entity</th>${columns.map(([, label]) => `<th class="num">${esc(label)}</th>`).join('')}<th>Status</th></tr></thead>
     <tbody>${rows.map((row) => {
-      const gavg = row.series['GAVG/cmd'] || row.series['LAT/rd'];
-      const davg = row.series['DAVG/cmd'];
-      const kavg = row.series['KAVG/cmd'];
-      const qued = row.series['QUED'];
-      const commands = row.series['CMDS/s'];
       const status = worstStatus(Object.values(row.series).map((series) => series.status));
       const name = row.scope === 'vm' ? `${row.entity}${row.instance?.match(/(:scsi\d+:\d+)$/)?.[1] || ''}` : (row.instance || row.entity);
+      const first = columns.map(([metric]) => row.series[metric]).find(Boolean) || Object.values(row.series)[0];
       return `<tr>
-        <td class="name"><a href="${escapeAttr(seriesRoute(gavg?.id || commands?.id || Object.values(row.series)[0]?.id || ''))}">${esc(name)}</a><span class="sub">${esc(row.group)}</span></td>
-        <td class="num">${formatMetric(gavg?.stats?.p95, gavg?.unit || 'ms')}</td>
-        <td class="num">${formatMetric(davg?.stats?.p95, 'ms')}</td>
-        <td class="num">${formatMetric(kavg?.stats?.p95, 'ms')}</td>
-        <td class="num">${formatMetric(qued?.stats?.p95, '')}</td>
-        <td class="num">${formatMetric(commands?.stats?.p95, '/s')}</td>
+        <td class="name"><a href="${escapeAttr(seriesRoute(first?.id || ''))}">${esc(name)}</a><span class="sub">${esc(row.group)}</span></td>
+        ${columns.map(([metric]) => {
+          const series = row.series[metric];
+          return `<td class="num">${formatMetric(series?.stats?.p95, series?.unit || '')}</td>`;
+        }).join('')}
         <td>${statusBadge(status)}</td>
       </tr>`;
     }).join('')}</tbody>
@@ -569,25 +647,51 @@ function networkRows(doc) {
 function networkTable(doc) {
   const rows = networkRows(doc);
   if (!rows.length) return emptyState('No network counters found', 'The capture does not contain Network Port metrics, or the port naming uses an unsupported format.');
+  const columns = [
+    ['%DRPTX', 'TX drops'],
+    ['%DRPRX', 'RX drops'],
+    ['MbTX/s', 'TX'],
+    ['MbRX/s', 'RX'],
+    ['PKTTX/s', 'TX packets'],
+    ['PKTRX/s', 'RX packets'],
+    ['SPEED', 'Link speed'],
+  ].filter(([metric]) => hasMetric(doc, metric));
+  if (!columns.length) return categorySeriesTable(doc, 'network');
   return `<div class="table-wrap"><table class="data">
-    <thead><tr><th>Port / VM</th><th class="num">TX drops</th><th class="num">RX drops</th><th class="num">TX</th><th class="num">RX</th><th>Status</th></tr></thead>
+    <thead><tr><th>Port / VM</th>${columns.map(([, label]) => `<th class="num">${esc(label)}</th>`).join('')}<th>Status</th></tr></thead>
     <tbody>${rows.map((row) => {
-      const tx = row.series['%DRPTX'];
-      const rx = row.series['%DRPRX'];
-      const mbTx = row.series['MbTX/s'];
-      const mbRx = row.series['MbRX/s'];
       const status = worstStatus(Object.values(row.series).map((series) => series.status));
       const label = row.scope === 'vm' ? row.entity : (row.instance || row.entity);
+      const first = columns.map(([metric]) => row.series[metric]).find(Boolean) || Object.values(row.series)[0];
       return `<tr>
-        <td class="name"><a href="${escapeAttr(seriesRoute(tx?.id || rx?.id || mbTx?.id || Object.values(row.series)[0]?.id || ''))}">${esc(label)}</a><span class="sub">${esc(row.group)}${row.instance && row.scope === 'vm' ? ` · ${esc(row.instance)}` : ''}</span></td>
-        <td class="num">${formatMetric(tx?.stats?.p95, '%')}</td>
-        <td class="num">${formatMetric(rx?.stats?.p95, '%')}</td>
-        <td class="num">${formatMetric(mbTx?.stats?.p95, 'Mbps')}</td>
-        <td class="num">${formatMetric(mbRx?.stats?.p95, 'Mbps')}</td>
+        <td class="name"><a href="${escapeAttr(seriesRoute(first?.id || ''))}">${esc(label)}</a><span class="sub">${esc(row.group)}${row.instance && row.scope === 'vm' ? ` · ${esc(row.instance)}` : ''}</span></td>
+        ${columns.map(([metric]) => {
+          const series = row.series[metric];
+          return `<td class="num">${formatMetric(series?.stats?.p95, series?.unit || '')}</td>`;
+        }).join('')}
         <td>${statusBadge(status)}</td>
       </tr>`;
     }).join('')}</tbody>
   </table></div>`;
+}
+
+function categorySeriesTable(doc, category, limit = 200) {
+  const list = (doc.series || [])
+    .filter((series) => series.category === category)
+    .sort((left, right) => statusRank(right.status) - statusRank(left.status) || (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0));
+  if (!list.length) return emptyState('No counters in this category', 'The uploaded capture does not contain any enabled fields for this category.');
+  const rows = list.slice(0, limit).map((series) => `<tr>
+    <td class="name"><a href="${escapeAttr(seriesRoute(series.id))}">${esc(metricName(doc, series))}</a><span class="sub">${esc(series.metric)} · ${esc(series.group)}${series.counter ? ` · ${esc(series.counter)}` : ''}</span></td>
+    <td>${esc(series.entity || series.vm || '—')}<span class="sub">${esc(series.instance || series.entityKind || '')}</span></td>
+    <td class="num">${formatMetric(series.stats?.avg, series.unit)}</td>
+    <td class="num">${formatMetric(series.stats?.p95, series.unit)}</td>
+    <td class="num">${formatMetric(series.stats?.max, series.unit)}</td>
+    <td>${statusBadge(series.status)}</td>
+  </tr>`).join('');
+  return `<div class="table-wrap"><table class="data">
+    <thead><tr><th>Signal</th><th>Entity</th><th class="num">Avg</th><th class="num">P95</th><th class="num">Peak</th><th>Status</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>${list.length > limit ? `<p class="chart-note">Showing ${limit} of ${list.length.toLocaleString()} series. Use <a href="#/metrics?category=${encodeURIComponent(category)}">All metrics</a> for the complete filterable list.</p>` : ''}`;
 }
 
 function topCpuSeries(doc, limit = 5) {
@@ -616,21 +720,26 @@ function reclaimSeries(doc, limit = 6) {
   const balloon = perVmTopSeries(doc, 'MCTLSZ', limit);
   const swap = perVmTopSeries(doc, 'SWCUR', limit);
   return [...balloon, ...swap]
-    .filter((series) => (Number(series.stats?.p95) || 0) > 0)
     .sort((left, right) => (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0))
     .slice(0, limit);
 }
 
 function storageLatencySeries(doc, limit = 5) {
-  return seriesByMetric(doc, 'GAVG/cmd')
-    .filter((series) => series.kind === 'numeric' && series.stats?.count)
-    .sort((left, right) => (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0))
-    .slice(0, limit);
+  const metricIds = ['GAVG/cmd', 'DAVG/cmd', 'KAVG/cmd', 'LAT/rd', 'LAT/wr', 'QAVG/cmd']
+    .filter((metric) => hasMetric(doc, metric));
+  for (const metric of metricIds) {
+    const rows = seriesByMetric(doc, metric)
+      .filter((series) => series.kind === 'numeric' && series.stats?.count)
+      .sort((left, right) => (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0))
+      .slice(0, limit);
+    if (rows.length) return rows;
+  }
+  return [];
 }
 
 function networkDropSeries(doc, limit = 5) {
   return [...seriesByMetric(doc, '%DRPTX'), ...seriesByMetric(doc, '%DRPRX')]
-    .filter((series) => series.kind === 'numeric' && (Number(series.stats?.p95) || 0) > 0)
+    .filter((series) => series.kind === 'numeric' && series.stats?.count)
     .sort((left, right) => (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0))
     .slice(0, limit);
 }
@@ -639,11 +748,12 @@ function overviewKpiSeries(doc) {
   const cpu = topCpuSeries(doc, 1)[0] || null;
   const cpuPeak = worstBy(doc, ['PCPU %', 'PCPU_UTIL', 'CORE_UTIL'], (series) => series.scope === 'host');
   const free = worstBy(doc, 'FREE_MB', (series) => series.scope === 'host');
+  const machine = worstBy(doc, 'MACHINE_MB', (series) => series.scope === 'host');
   const reclaim = worstBy(doc, ['MCTLSZ', 'SWCUR', 'SWAP_USED_MB', 'MEMCTL_CURRENT_MB'], (series) => (Number(series.stats?.p95) || 0) > 0);
   const ready = perVmTopSeries(doc, '%RDY', 1)[0] || null;
-  const gavg = storageLatencySeries(doc, 1)[0] || null;
+  const latency = storageLatencySeries(doc, 1)[0] || null;
   const drops = networkDropSeries(doc, 1)[0] || null;
-  return [cpuPeak || cpu, reclaim || free, ready, gavg, drops].filter(Boolean);
+  return [cpuPeak || cpu, reclaim || free || machine, ready, latency, drops].filter(Boolean);
 }
 
 function overviewKpiCards(doc) {
@@ -654,40 +764,59 @@ function overviewKpiCards(doc) {
   const reclaim = worstBy(doc, ['MCTLSZ', 'SWCUR', 'SWAP_USED_MB', 'MEMCTL_CURRENT_MB'], (series) => (Number(series.stats?.p95) || 0) > 0);
   const ready = perVmTopSeries(doc, '%RDY', 1)[0] || null;
   const readyCount = new Set((doc.findings || []).filter((finding) => finding.ruleId === 'cpu.ready').map((finding) => finding.entity)).size;
-  const gavg = storageLatencySeries(doc, 1)[0] || null;
+  const latency = storageLatencySeries(doc, 1)[0] || null;
   const qued = worstBy(doc, 'QUED');
   const drops = networkDropSeries(doc, 1)[0] || null;
-  const freePct = free?.stats?.last && machine?.stats?.last ? (free.stats.last / machine.stats.last) * 100 : null;
-  return [
-    kpiCard({
+  const tx = worstBy(doc, 'MbTX/s');
+  const rx = worstBy(doc, 'MbRX/s');
+  const freePct = free?.stats?.last !== null && free?.stats?.last !== undefined && machine?.stats?.last
+    ? (free.stats.last / machine.stats.last) * 100
+    : null;
+  const cards = [];
+  if (cpu || cpuPeak) {
+    cards.push(kpiCard({
       label: 'Host CPU', value: formatMetric(cpu?.stats?.p95, '%'), sub: cpuPeak && cpuPeak !== cpu ? `peak core ${formatMetric(cpuPeak.stats?.p95, '%')}` : 'P95 host signal',
       series: cpuPeak || cpu, status: doc.summary.categories?.cpu?.status || 'neutral', href: cpu ? seriesRoute(cpu.id) : '#/cpu', iconName: 'gauge', sparkId: 'kpi-cpu',
-    }),
-    kpiCard({
-      label: reclaim ? 'Memory' : 'Free memory',
-      value: formatMetric(reclaim?.stats?.p95, 'MB'),
-      sub: reclaim ? `free ${formatMetric(free?.stats?.last, 'MB')}` : (freePct !== null ? `${formatNumber(freePct, 1)}% of machine` : 'host free memory'),
-      series: reclaim || free, status: reclaim?.status || 'neutral',
-      href: reclaim ? seriesRoute(reclaim.id) : (free ? seriesRoute(free.id) : '#/memory'),
+    }));
+  }
+  const memorySeries = reclaim || free || machine;
+  if (memorySeries) {
+    cards.push(kpiCard({
+      label: reclaim ? 'Memory' : (free ? 'Free memory' : 'Machine memory'),
+      value: reclaim ? formatMetric(reclaim.stats?.p95, 'MB') : formatMetric((free || machine)?.stats?.last, 'MB'),
+      sub: reclaim ? `free ${formatMetric(free?.stats?.last, 'MB')}` : (freePct !== null ? `${formatNumber(freePct, 1)}% of machine` : (free ? 'host free memory' : 'physical memory')),
+      series: memorySeries, status: memorySeries?.status || 'neutral',
+      href: seriesRoute(memorySeries.id),
       iconName: 'memory', sparkId: 'kpi-free',
-    }),
-    kpiCard({
-      label: 'vCPU ready', value: formatMetric(ready?.stats?.p95, '%'), sub: `${readyCount} VM${readyCount === 1 ? '' : 's'} above guardrail`,
-      series: ready, status: ready?.status || 'neutral', href: ready ? seriesRoute(ready.id) : '#/cpu', iconName: 'gauge', sparkId: 'kpi-ready',
-    }),
-    kpiCard({
-      label: 'Storage', value: formatMetric(gavg?.stats?.p95, 'ms'), sub: qued ? `QUED ${formatMetric(qued.stats?.p95, '')}` : 'worst virtual disk/LUN',
-      series: gavg, status: gavg?.status || doc.summary.categories?.storage?.status || 'neutral', href: gavg ? seriesRoute(gavg.id) : '#/storage', iconName: 'disk', sparkId: 'kpi-gavg',
-    }),
-    kpiCard({
-      label: 'Network', value: formatMetric(drops?.stats?.p95, '%'), sub: drops ? seriesShortLabel(drops) : 'no drop signal',
-      series: drops, status: drops?.status || doc.summary.categories?.network?.status || 'neutral', href: drops ? seriesRoute(drops.id) : '#/network', iconName: 'network', sparkId: 'kpi-drop',
-    }),
-    kpiCard({
-      label: 'VMs', value: String(doc.meta.vmCount || 0), sub: `${doc.summary.critical || 0} critical findings`,
-      series: null, status: doc.summary.status || 'neutral', href: '#/vms', iconName: 'server', sparkId: 'kpi-vms',
-    }),
-  ];
+    }));
+  }
+  if (ready) {
+    cards.push(kpiCard({
+      label: 'vCPU ready', value: formatMetric(ready.stats?.p95, '%'), sub: `${readyCount} VM${readyCount === 1 ? '' : 's'} above guardrail`,
+      series: ready, status: ready.status || 'neutral', href: seriesRoute(ready.id), iconName: 'gauge', sparkId: 'kpi-ready',
+    }));
+  }
+  if (latency || qued) {
+    cards.push(kpiCard({
+      label: 'Storage', value: latency ? formatMetric(latency.stats?.p95, latency.unit || 'ms') : formatMetric(qued?.stats?.p95, ''),
+      sub: qued ? `QUED ${formatMetric(qued.stats?.p95, '')}` : (latency ? seriesShortLabel(latency) : 'host storage queue'),
+      series: latency || qued, status: (latency || qued)?.status || doc.summary.categories?.storage?.status || 'neutral',
+      href: seriesRoute((latency || qued).id), iconName: 'disk', sparkId: 'kpi-gavg',
+    }));
+  }
+  const networkSeries = drops || tx || rx;
+  if (networkSeries) {
+    cards.push(kpiCard({
+      label: 'Network', value: formatMetric(networkSeries.stats?.p95, networkSeries.unit || ''), sub: drops ? seriesShortLabel(drops) : seriesShortLabel(networkSeries),
+      series: networkSeries, status: networkSeries?.status || doc.summary.categories?.network?.status || 'neutral',
+      href: seriesRoute(networkSeries.id), iconName: 'network', sparkId: 'kpi-drop',
+    }));
+  }
+  cards.push(kpiCard({
+    label: 'VMs', value: String(doc.meta.vmCount || 0), sub: `${doc.summary.critical || 0} critical findings`,
+    series: null, status: doc.summary.status || 'neutral', href: '#/vms', iconName: 'server', sparkId: 'kpi-vms',
+  }));
+  return cards;
 }
 
 function overviewCharts(doc) {
@@ -718,8 +847,9 @@ function overviewCharts(doc) {
   }
   const latency = storageLatencySeries(doc, 5);
   if (latency.length) {
-    specs.push(chartSpec('chart-overview-storage', 'Guest storage latency', 'GAVG by virtual disk, device and adapter. Use the storage page to split DAVG and KAVG.', latency, doc, {
-      link: '#/storage', linkText: 'Storage drilldown', yUnit: 'ms',
+    const latencyLabel = metricName(doc, latency[0]);
+    specs.push(chartSpec('chart-overview-storage', latencyLabel, `${latencyLabel} for the highest-latency entities. Use the storage page and All metrics to inspect the other latency layers separately.`, latency, doc, {
+      link: '#/storage', linkText: 'Storage drilldown', yUnit: latency[0].unit || 'ms',
     }));
   }
   const drops = networkDropSeries(doc, 5);
@@ -736,6 +866,9 @@ export function renderImport(ctx) {
   const state = ctx.state;
   const doc = state.doc;
   const commandRows = COMMAND.map(([key, description]) => `<div class="cmd-line"><span class="cmd-key">${esc(key)}</span><span class="cmd-desc">${esc(description)}</span></div>`).join('');
+  const authRequired = Boolean(ctx.state.health?.uploadAuthRequired);
+  const savedPassword = ctx.uploadPassword?.() || '';
+  const uploadPasswordField = authRequired ? `<label class="field upload-password-field"><span>Upload password</span><input class="input" id="upload-password" type="password" value="${escapeAttr(savedPassword)}" autocomplete="current-password" spellcheck="false" aria-describedby="upload-password-help"><small id="upload-password-help">Protects the upload endpoint only. Kept in this tab's session storage and sent only with the upload request.</small></label>` : '';
   const monitorSeries = [19, 23, 18, 31, 28, 42, 36, 47, 38, 52, 44, 61, 49, 55, 46, 42, 58, 64, 57, 69, 63, 60, 71, 66, 74, 68, 72, 76, 70, 78];
   const chartPoints = monitorSeries.map((value, index) => `${(index * 340) / (monitorSeries.length - 1)},${110 - (value - 15) * 1.3}`).join(' L');
   const error = state.error ? `<div class="error-banner">${icon('alert', 16)}<div><strong>Capture not loaded.</strong><br>${esc(state.error)}</div></div>` : '';
@@ -790,6 +923,7 @@ export function renderImport(ctx) {
             <div class="file-types"><span>.csv</span><span>.csv.gz</span><span>.gz</span><span>PDH-CSV 4.0</span></div>
           </div>
           <input type="file" id="landing-file" hidden accept=".csv,.csv.gz,.gz,.txt,text/csv,application/gzip">
+          ${uploadPasswordField}
           <div class="upload-actions">
             <button class="btn btn-primary" type="button" data-open-upload>${icon('upload', 15)} Choose file</button>
             <button class="btn" type="button" data-load-demo>${icon('play', 14)} Use demo</button>
@@ -845,10 +979,19 @@ export function renderImport(ctx) {
     mount(root) {
       const input = root.querySelector('#landing-file');
       const dropzone = root.querySelector('#landing-dropzone');
+      const passwordInput = root.querySelector('#upload-password');
       const open = () => input?.click();
       const send = (file) => {
-        if (file) ctx.uploadFile(file);
+        if (!file) return;
+        if (authRequired && !passwordInput?.value) {
+          ctx.toast('Enter the upload password before choosing a capture.');
+          passwordInput?.focus();
+          return;
+        }
+        if (passwordInput) ctx.setUploadPassword(passwordInput.value);
+        ctx.uploadFile(file);
       };
+      passwordInput?.addEventListener('input', () => ctx.setUploadPassword(passwordInput.value));
       root.querySelectorAll('[data-open-upload]').forEach((button) => button.addEventListener('click', open));
       root.querySelectorAll('[data-load-demo]').forEach((button) => button.addEventListener('click', () => ctx.loadDemo()));
       dropzone?.addEventListener('click', open);
@@ -918,7 +1061,10 @@ export function renderReport(ctx) {
   const initialHost = doc.meta.host || hosts[0] || '';
   const initialVms = reportVmNames(doc, initialHost);
   const hostOptions = (selected) => hosts.map((host) => `<option value="${escapeAttr(host)}"${host === selected ? ' selected' : ''}>${esc(host)}</option>`).join('');
-  const categoryChoices = REPORT_CATEGORIES.map((category) => `<label class="check-field report-category-choice"><input type="checkbox" data-report-category="${category}" checked> ${esc(categoryLabel(category))}</label>`).join('');
+  const availableCategories = REPORT_CATEGORIES.filter((category) => (doc.summary?.categories?.[category]?.series || 0) > 0);
+  const reportCategories = availableCategories.length ? availableCategories : REPORT_CATEGORIES;
+  const categoryChoices = reportCategories.map((category) => `<label class="check-field report-category-choice"><input type="checkbox" data-report-category="${category}" checked> ${esc(categoryLabel(category))}</label>`).join('');
+  const availableCategoryCount = reportCategories.length;
   return {
     html: `
       <div class="page-head">
@@ -1024,9 +1170,9 @@ export function renderReport(ctx) {
           const hostCount = selectedHosts().length;
           const vmCount = selectedVmPairs().length;
           summary.textContent = reset
-            ? `Categories: ${cats.length}/6 · scope ready to generate`
+            ? `Categories: ${cats.length}/${availableCategoryCount} · scope ready to generate`
             : generatedScope
-              ? `Generated · ${cats.length}/6 categories${mode === 'all' ? ' · all hosts/VMs' : mode === 'vms' ? ` · ${vmCount} VMs` : mode === 'both' ? ` · ${hostCount} hosts / ${vmCount || 'all'} VMs` : ` · ${hostCount} hosts`}`
+              ? `Generated · ${cats.length}/${availableCategoryCount} categories${mode === 'all' ? ' · all hosts/VMs' : mode === 'vms' ? ` · ${vmCount} VMs` : mode === 'both' ? ` · ${hostCount} hosts / ${vmCount || 'all'} VMs` : ` · ${hostCount} hosts`}`
               : 'Choose a scope, then generate the report.';
         }
         if (reset) showPlaceholder();
@@ -1058,7 +1204,7 @@ export function renderReport(ctx) {
         root.querySelectorAll('[data-report-category]').forEach((input) => { input.checked = true; });
         updateScopeState();
       });
-      root.querySelector('#report-generate')?.addEventListener('click', () => {
+      root.querySelector('#report-generate')?.addEventListener('click', async () => {
         if (!selectedCategories().length) {
           ctx.toast('Select at least one metric category.');
           return;
@@ -1072,11 +1218,23 @@ export function renderReport(ctx) {
           return;
         }
         generatedScope = selectedScope();
-        content.innerHTML = reportBody(doc, generatedScope);
-        if (htmlButton) htmlButton.disabled = false;
-        if (pdfButton) pdfButton.disabled = false;
-        if (csvButton) csvButton.disabled = false;
-        updateScopeState(false);
+        if (htmlButton) htmlButton.disabled = true;
+        if (pdfButton) pdfButton.disabled = true;
+        if (csvButton) csvButton.disabled = true;
+        content.innerHTML = `<div class="card flat report-placeholder"><div class="card-kicker">Building report</div><h2><span class="spinner"></span> Generating report…</h2><p class="muted">Large all-fields captures can take a while because every captured series is included in the appendix.</p></div>`;
+        await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+        try {
+          content.innerHTML = reportBody(doc, generatedScope);
+          if (htmlButton) htmlButton.disabled = false;
+          if (pdfButton) pdfButton.disabled = false;
+          if (csvButton) csvButton.disabled = false;
+          updateScopeState(false);
+        } catch (error) {
+          console.error(error);
+          generatedScope = null;
+          showPlaceholder(`Report generation failed: ${error.message}`);
+          ctx.toast('Report generation failed. Check the console for details.');
+        }
       });
       htmlButton?.addEventListener('click', () => {
         if (generatedScope) downloadReportHTML(doc, ctx.toast, generatedScope);
@@ -1113,6 +1271,22 @@ export async function renderCategory(ctx, category) {
   let primaryTable = '';
   let secondary = '';
 
+  if (!categorySummary.series) {
+    return {
+      html: `
+        <div class="page-head">
+          <div class="eyebrow">${esc(meta.eyebrow)}</div>
+          <h1>${esc(meta.title)}</h1>
+          <p class="page-lede">${esc(meta.description)}</p>
+          <div class="summary-status-row">${statusBadge('neutral')} <span class="dim">No counters from this panel are present in the capture</span></div>
+        </div>
+        ${captureTabs(doc, category)}
+        ${emptyState('This panel was not captured', 'ESXtop Lens only shows counters that exist in the uploaded file. Enable the relevant esxtop panel fields and capture again if this evidence is required.')}
+      `,
+      mount() {},
+    };
+  }
+
   if (category === 'cpu') {
     const cpuList = topCpuSeries(doc, 6);
     if (cpuList.length) specs.push(chartSpec('chart-cpu-host', 'Host physical CPU', 'Total and busiest cores. Use P95 rather than a single peak when judging saturation.', cpuList, doc, { linkText: 'All metrics', link: '#/metrics?category=cpu', yUnit: '%' }));
@@ -1130,7 +1304,7 @@ export async function renderCategory(ctx, category) {
     const reclaim = reclaimSeries(doc, 7);
     if (reclaim.length) specs.push(chartSpec('chart-mem-reclaim', 'VM memory reclaim', 'Ballooning and VMkernel swap by VM. Persistent swap-in is synchronous and can look like an application stall.', reclaim, doc, { yUnit: 'MB', label: (series) => `${series.vm} · ${series.metric === 'MCTLSZ' ? 'balloon' : 'swap'}` }));
     const swap = [...seriesByMetric(doc, 'SWAP_READ'), ...seriesByMetric(doc, 'SWAP_WRITE'), ...seriesByMetric(doc, 'SWR/s'), ...seriesByMetric(doc, 'SWW/s')]
-      .filter((series) => (Number(series.stats?.p95) || 0) > 0)
+      .filter((series) => series.kind === 'numeric' && series.stats?.count)
       .sort((left, right) => (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0)).slice(0, 6);
     if (swap.length) specs.push(chartSpec('chart-mem-swap-io', 'Swap I/O rate', 'Host and VM swap rates. Any sustained swap-in deserves priority attention.', swap, doc, { yUnit: 'MB/s', label: (series) => `${series.entity || series.vm || 'host'} · ${series.metric}` }));
     const overcommit = seriesByMetric(doc, 'OVERCOMMIT1').filter((series) => series.scope === 'host');
@@ -1139,7 +1313,10 @@ export async function renderCategory(ctx, category) {
     secondary = `<div class="section-head"><div><div class="eyebrow">Host view</div><h2>Host memory signals</h2></div><p>Overcommit, balloon target, swap and compression are related but not interchangeable.</p></div>${hostMemoryTable(doc)}`;
   } else if (category === 'storage') {
     const latency = storageLatencySeries(doc, 7);
-    if (latency.length) specs.push(chartSpec('chart-storage-gavg', 'Guest storage latency', 'GAVG = DAVG + KAVG. Split the layers on the storage table before blaming the array.', latency, doc, { yUnit: 'ms', label: (series) => `${series.scope === 'vm' ? series.entity : series.instance || series.entity}` }));
+    if (latency.length) {
+      const latencyLabel = metricName(doc, latency[0]);
+      specs.push(chartSpec('chart-storage-latency', latencyLabel, 'This chart uses the highest-priority latency metric present in the capture. The storage table and All metrics show the other captured layers without inventing missing fields.', latency, doc, { yUnit: latency[0].unit || 'ms', label: (series) => `${series.scope === 'vm' ? series.entity : series.instance || series.entity}` }));
+    }
     const kavg = seriesByMetric(doc, 'KAVG/cmd').sort((left, right) => (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0)).slice(0, 6);
     if (kavg.length) specs.push(chartSpec('chart-storage-kavg', 'VMkernel latency', 'KAVG is the ESXi storage stack. Sustained elevation commonly means queuing or a queue-depth mismatch.', kavg, doc, { yUnit: 'ms', label: (series) => series.scope === 'vm' ? series.entity : series.instance || series.entity }));
     const qued = seriesByMetric(doc, 'QUED').sort((left, right) => (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0)).slice(0, 6);
@@ -1157,8 +1334,25 @@ export async function renderCategory(ctx, category) {
     if (rx.length) specs.push(chartSpec('chart-network-rx', 'Receive throughput', 'Pair receive throughput with drops and host CPU readiness; packet processing can be CPU-bound.', rx, doc, { yUnit: 'Mbps', label: (series) => series.entity || series.instance }));
     primaryTable = `<div class="section-head"><div><div class="eyebrow">Ports and VMs</div><h2>Network signals</h2></div><div class="section-actions"><a class="btn" href="#/metrics?category=network">${icon('table', 14)} All network signals</a></div></div>${networkTable(doc)}`;
     secondary = '';
+  } else if (category === 'power') {
+    const powerNow = seriesByMetric(doc, 'POWER_NOW').filter((series) => series.kind === 'numeric');
+    const powerCap = seriesByMetric(doc, 'POWER_CAP').filter((series) => series.kind === 'numeric');
+    if (powerNow.length || powerCap.length) {
+      specs.push(chartSpec('chart-power-host', 'Host power usage and cap', 'Observed power and configured cap. Sustained operation at the cap may mean the host is power-limited.', [...powerNow, ...powerCap], doc, { yUnit: 'W', label: (series) => series.metric === 'POWER_CAP' ? 'Power cap' : 'Power usage' }));
+    }
+    const aperf = seriesByMetric(doc, 'PCPU_APERF_MPERF').sort((left, right) => (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0)).slice(0, 6);
+    if (aperf.length) specs.push(chartSpec('chart-power-aperf', 'aperf/mperf ratio', 'Actual versus maximum performance frequency. Values above 100% can indicate turbo frequency.', aperf, doc, { yUnit: '%', label: (series) => series.instance || series.entity }));
+    primaryTable = `<div class="section-head"><div><div class="eyebrow">Power panel</div><h2>Power and CPU power-state signals</h2></div><div class="section-actions"><a class="btn" href="#/metrics?category=power">${icon('table', 14)} All power signals</a></div></div><p class="muted">Only the fields present in this capture are listed. C-state and T-state percentages describe residency time, not utilisation.</p>${categorySeriesTable(doc, 'power')}`;
+    secondary = '';
+  } else if (category === 'interrupt') {
+    const rate = seriesByMetric(doc, 'INT_COUNT/s').filter((series) => series.kind === 'numeric' && series.stats?.count).sort((left, right) => (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0)).slice(0, 6);
+    if (rate.length) specs.push(chartSpec('chart-interrupt-rate', 'Interrupt rate', 'Highest interrupt-cookie rates in the capture. Use the metric table and the per-CPU breakdown to separate one busy device from a host-wide storm.', rate, doc, { yUnit: '/s', label: (series) => series.instance || series.entity }));
+    const timing = seriesByMetric(doc, 'INT_TIME/us').filter((series) => series.kind === 'numeric' && series.stats?.count).sort((left, right) => (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0)).slice(0, 6);
+    if (timing.length) specs.push(chartSpec('chart-interrupt-time', 'Interrupt processing time', 'Average microseconds per interrupt. High time with a high rate is the combination most likely to consume measurable CPU.', timing, doc, { yUnit: 'µs', label: (series) => series.instance || series.entity }));
+    primaryTable = `<div class="section-head"><div><div class="eyebrow">Interrupt panel</div><h2>Interrupt cookie signals</h2></div><div class="section-actions"><a class="btn" href="#/metrics?category=interrupt">${icon('table', 14)} All interrupt signals</a></div></div><p class="muted">Interrupt cookies can be numerous. The table is capped for responsiveness; the metric explorer and report appendix retain every captured cookie.</p>${categorySeriesTable(doc, 'interrupt', 300)}`;
+    secondary = '';
   } else {
-    primaryTable = `<div class="section-head"><div><div class="eyebrow">Unclassified</div><h2>Other signals</h2></div><div class="section-actions"><a class="btn" href="#/metrics?category=other">${icon('table', 14)} All metrics</a></div></div>${emptyState('No curated page for this category', 'Use All metrics to inspect these counters. The raw series and stats remain available.')}`;
+    primaryTable = `<div class="section-head"><div><div class="eyebrow">Unclassified</div><h2>Other signals</h2></div><div class="section-actions"><a class="btn" href="#/metrics?category=other">${icon('table', 14)} All metrics</a></div></div>${categorySeriesTable(doc, 'other')}`;
   }
 
   await loadSeriesForPage(ctx, specs);
@@ -1225,7 +1419,7 @@ export function renderVms(ctx) {
         if (!matches.length) {
           wrap.innerHTML = emptyState('No matching VM', 'Search checks the VM display name from the capture.');
         } else {
-          wrap.innerHTML = `<div class="table-wrap"><table class="data"><thead><tr><th>Virtual machine</th><th class="num">vCPU</th><th class="num">Memory</th><th class="num">CPU used</th><th class="num">%RDY</th><th class="num">%MLMTD</th><th class="num">%CSTP</th><th class="num">Balloon</th><th class="num">Swap</th><th class="num">GAVG</th><th>Status</th></tr></thead><tbody>${matches.map(({ html }) => html).join('')}</tbody></table></div>`;
+          wrap.innerHTML = `<div class="table-wrap"><table class="data">${vmTableHead(doc)}<tbody>${matches.map(({ html }) => html).join('')}</tbody></table></div>`;
         }
       });
       if (!original) wrap.innerHTML = original;
@@ -1234,19 +1428,7 @@ export function renderVms(ctx) {
 }
 
 function vmRowHtml(doc, vm) {
-  return `<tr>
-    <td class="name"><a href="${escapeAttr(vmRoute(vm.name))}">${esc(vm.name)}</a><span class="sub">${vm.findings.length ? `${vm.findings.length} finding${vm.findings.length === 1 ? '' : 's'}` : 'no findings'}</span></td>
-    <td class="num">${vm.vcpus ?? '—'}</td>
-    <td class="num">${vm.configuredMemory !== null ? formatMetric(vm.configuredMemory, 'MB') : '—'}</td>
-    <td class="num">${formatMetric(vm.cpuUsed?.stats?.p95, '%')}</td>
-    <td class="num">${formatMetric(vm.ready?.stats?.p95, '%')}</td>
-    <td class="num">${formatMetric(vm.mlmtd?.stats?.p95, '%')}</td>
-    <td class="num">${formatMetric(vm.cstop?.stats?.p95, '%')}</td>
-    <td class="num">${formatMetric(vm.balloon?.stats?.p95, 'MB')}</td>
-    <td class="num">${formatMetric(vm.swap?.stats?.p95, 'MB')}</td>
-    <td class="num">${formatMetric(vm.disk?.stats?.p95, 'ms')}</td>
-    <td>${statusBadge(vm.status)}</td>
-  </tr>`;
+  return `<tr>${vmColumns(doc).map((column) => column.cell(vm)).join('')}</tr>`;
 }
 
 export async function renderVm(ctx, vmName) {
@@ -1259,24 +1441,39 @@ export async function renderVm(ctx, vmName) {
     };
   }
   const specs = [];
-  const ready = vm.list.filter((series) => series.group?.toLowerCase().startsWith('vcpu') && series.metric === '%RDY');
+  const ready = vm.list.filter((series) => isVcpuWorld(series) && series.metric === '%RDY');
   if (ready.length) specs.push(chartSpec('chart-vm-ready', 'vCPU ready time', 'The percentage of time each vCPU was ready but waiting for a physical CPU. Compare with %MLMTD.', ready, doc, { yUnit: '%', label: (series) => series.world || series.instance, area: ready.length === 1 }));
   const usedGroup = vm.list.filter((series) => series.group?.toLowerCase().startsWith('group cpu') && series.metric === '%USED');
-  const usedVcpu = vm.list.filter((series) => series.group?.toLowerCase().startsWith('vcpu') && series.metric === '%USED');
+  const usedVcpu = vm.list.filter((series) => isVcpuWorld(series) && series.metric === '%USED');
   const used = usedGroup.length ? usedGroup : usedVcpu;
   if (used.length) specs.push(chartSpec('chart-vm-used', 'CPU used', usedGroup.length ? 'Group-level CPU utilisation across all worlds.' : 'Per-vCPU utilisation because the capture has no Group Cpu counter.', used, doc, { yUnit: '%', label: (series) => series.world || series.vm }));
   const memory = vm.list.filter((series) => ['MCTLSZ', 'SWCUR'].includes(series.metric));
   if (memory.length) specs.push(chartSpec('chart-vm-memory', 'Memory reclaim', 'Ballooned memory and current swap for this VM. A current swap value can persist after the pressure has passed; watch swap rates too.', memory, doc, { yUnit: 'MB', label: (series) => series.metric === 'MCTLSZ' ? 'Balloon' : 'VMkernel swap' }));
-  const disk = vm.list.filter((series) => series.metric === 'GAVG/cmd');
-  if (disk.length) specs.push(chartSpec('chart-vm-disk', 'Virtual disk latency', 'Guest-observed latency. Use the storage page to split DAVG, KAVG and queueing.', disk, doc, { yUnit: 'ms', label: (series) => series.instance || 'virtual disk' }));
+  const diskMetric = ['GAVG/cmd', 'LAT/rd', 'LAT/wr', 'VSCSI_LATENCY'].find((metric) => vm.list.some((series) => series.metric === metric));
+  const disk = diskMetric ? vm.list.filter((series) => series.metric === diskMetric) : [];
+  if (disk.length) {
+    const diskLabel = metricName(doc, disk[0]);
+    specs.push(chartSpec('chart-vm-disk', diskLabel, 'Latency at the highest-priority layer captured for this VM. Use the storage page and All metrics to inspect the other captured layers.', disk, doc, { yUnit: disk[0].unit || 'ms', label: (series) => series.instance || 'virtual disk' }));
+  }
   const drops = vm.list.filter((series) => ['%DRPTX', '%DRPRX'].includes(series.metric));
   if (drops.length) specs.push(chartSpec('chart-vm-network', 'Network drops', 'Transmit and receive drop percentages on the VM network port.', drops, doc, { yUnit: '%', label: (series) => series.metric === '%DRPTX' ? 'TX drops' : 'RX drops' }));
   const findings = (doc.findings || []).filter((finding) => finding.entity === vm.name);
+  const presentMetrics = new Set(vm.list.map((series) => series.metric));
   const vmTechnical = ['%RDY', '%MLMTD', '%CSTP', 'MCTLSZ', 'SWCUR', 'GAVG/cmd']
     .map((metric) => ({ metric, ...technicalFor(metric) }))
-    .filter((item) => item.name);
+    .filter((item) => item.name && presentMetrics.has(item.metric));
+  const storageLatency = vm.disk || vm.davg || vm.kavg;
+  const kpiCards = [];
+  if (vm.vcpus !== null && vm.vcpus !== undefined && hasVcpuSeries(doc)) {
+    kpiCards.push(kpiCard({ label: 'vCPUs', value: vm.vcpus, sub: 'worlds detected', status: 'neutral', href: '#/vms', iconName: 'server', sparkId: 'vm-vcpus' }));
+  }
+  if (vm.ready) kpiCards.push(kpiCard({ label: 'CPU ready', value: formatMetric(vm.ready.stats?.p95, '%'), sub: 'worst vCPU P95', series: vm.ready, status: vm.ready.status || 'neutral', href: seriesRoute(vm.ready.id), iconName: 'gauge', sparkId: 'vm-ready' }));
+  if (vm.mlmtd) kpiCards.push(kpiCard({ label: 'CPU limit', value: formatMetric(vm.mlmtd.stats?.p95, '%'), sub: 'MLMTD P95', series: vm.mlmtd, status: vm.mlmtd.status || 'neutral', href: seriesRoute(vm.mlmtd.id), iconName: 'gauge', sparkId: 'vm-mlmtd' }));
+  if (vm.balloon) kpiCards.push(kpiCard({ label: 'Ballooned', value: formatMetric(vm.balloon.stats?.p95, 'MB'), sub: 'P95', series: vm.balloon, status: vm.balloon.status || 'neutral', href: seriesRoute(vm.balloon.id), iconName: 'memory', sparkId: 'vm-balloon' }));
+  if (vm.swap) kpiCards.push(kpiCard({ label: 'Swapped', value: formatMetric(vm.swap.stats?.p95, 'MB'), sub: 'current VMkernel swap', series: vm.swap, status: vm.swap.status || 'neutral', href: seriesRoute(vm.swap.id), iconName: 'memory', sparkId: 'vm-swap' }));
+  if (storageLatency) kpiCards.push(kpiCard({ label: storageLatency.metric === 'GAVG/cmd' ? 'Disk GAVG' : storageLatency.metric, value: formatMetric(storageLatency.stats?.p95, storageLatency.unit || 'ms'), sub: 'worst matching layer', series: storageLatency, status: storageLatency.status || 'neutral', href: seriesRoute(storageLatency.id), iconName: 'disk', sparkId: 'vm-disk' }));
   const tableRows = vm.list.slice(0, 200);
-  await loadSeriesForPage(ctx, specs, [vm.ready, vm.mlmtd, vm.balloon, vm.swap, vm.disk].map((series) => series?.id));
+  await loadSeriesForPage(ctx, specs, [vm.ready, vm.mlmtd, vm.balloon, vm.swap, storageLatency].map((series) => series?.id));
   return {
     html: `
       <div class="page-head">
@@ -1287,14 +1484,7 @@ export async function renderVm(ctx, vmName) {
       </div>
       ${captureTabs(doc, 'vms')}
       <div class="summary-actions"><a class="btn btn-ghost btn-sm" href="#/vms">${icon('back', 13)} All VMs</a><a class="btn btn-ghost btn-sm" href="#/metrics?q=${encodeURIComponent(vm.name)}">${icon('table', 13)} All metrics for this VM</a></div>
-      <section class="kpi-grid mt-1">
-        ${kpiCard({ label: 'vCPUs', value: vm.vcpus ?? '—', sub: 'worlds detected', status: 'neutral', href: '#/vms', iconName: 'server', sparkId: 'vm-vcpus' })}
-        ${kpiCard({ label: 'CPU ready', value: formatMetric(vm.ready?.stats?.p95, '%'), sub: 'worst vCPU P95', series: vm.ready, status: vm.ready?.status || 'neutral', href: vm.ready ? seriesRoute(vm.ready.id) : '#/cpu', iconName: 'gauge', sparkId: 'vm-ready' })}
-        ${kpiCard({ label: 'CPU limit', value: formatMetric(vm.mlmtd?.stats?.p95, '%'), sub: 'MLMTD P95', series: vm.mlmtd, status: vm.mlmtd?.status || 'neutral', href: vm.mlmtd ? seriesRoute(vm.mlmtd.id) : '#/cpu', iconName: 'gauge', sparkId: 'vm-mlmtd' })}
-        ${kpiCard({ label: 'Ballooned', value: formatMetric(vm.balloon?.stats?.p95, 'MB'), sub: 'P95', series: vm.balloon, status: vm.balloon?.status || 'neutral', href: vm.balloon ? seriesRoute(vm.balloon.id) : '#/memory', iconName: 'memory', sparkId: 'vm-balloon' })}
-        ${kpiCard({ label: 'Swapped', value: formatMetric(vm.swap?.stats?.p95, 'MB'), sub: 'current VMkernel swap', series: vm.swap, status: vm.swap?.status || 'neutral', href: vm.swap ? seriesRoute(vm.swap.id) : '#/memory', iconName: 'memory', sparkId: 'vm-swap' })}
-        ${kpiCard({ label: 'Disk GAVG', value: formatMetric(vm.disk?.stats?.p95, 'ms'), sub: 'worst virtual disk', series: vm.disk, status: vm.disk?.status || 'neutral', href: vm.disk ? seriesRoute(vm.disk.id) : '#/storage', iconName: 'disk', sparkId: 'vm-disk' })}
-      </section>
+      ${kpiCards.length ? `<section class="kpi-grid mt-1">${kpiCards.join('')}</section>` : ''}
       ${specs.length ? chartCardsHtml(specs) : emptyState('No chartable VM signals', 'The capture contains this VM name but no numeric series for it.')}
       <div class="section-head"><div><div class="eyebrow">Findings</div><h2>What needs attention</h2></div><div class="section-actions"><a class="btn" href="#/insights">${icon('insights', 14)} Global insights</a></div></div>
       ${findings.length ? `<div class="findings">${findings.map((finding) => findingCard(finding)).join('')}</div>` : emptyState('No threshold findings for this VM', 'Inspect the raw counters below. A neutral metric can still be important if it is outside the rule set.')}
@@ -1304,7 +1494,7 @@ export async function renderVm(ctx, vmName) {
       <div class="grid-2">${vmTechnical.map((item) => `<div class="card flat"><div class="card-kicker">${esc(item.metric)}</div><h3>${esc(item.name)}</h3><p class="muted">${item.what}</p><p class="muted">${item.read}</p></div>`).join('')}</div>
       <div class="section-head"><div><div class="eyebrow">Raw signals</div><h2>All metrics for ${esc(vm.name)}</h2></div><div class="section-actions"><a class="btn" href="#/metrics?q=${encodeURIComponent(vm.name)}">${icon('search', 14)} Search this VM</a></div></div>
       <div class="table-wrap"><table class="data"><thead><tr><th>Signal</th><th>Group / instance</th><th class="num">Avg</th><th class="num">P95</th><th class="num">Peak</th><th>Status</th></tr></thead><tbody>
-        ${tableRows.map((series) => `<tr><td class="name"><a href="${escapeAttr(seriesRoute(series.id))}">${esc(metricName(doc, series))}</a><span class="sub">${esc(series.metric)}</span></td><td>${esc(series.group)}${series.instance ? `<span class="sub">${esc(series.instance)}</span>` : ''}</td><td class="num">${formatMetric(series.stats?.avg, series.unit)}</td><td class="num">${formatMetric(series.stats?.p95, series.unit)}</td><td class="num">${formatMetric(series.stats?.max, series.unit)}</td><td>${statusBadge(series.status)}</td></tr>`).join('')}
+        ${tableRows.map((series) => `<tr><td class="name"><a href="${escapeAttr(seriesRoute(series.id))}">${esc(metricName(doc, series))}</a><span class="sub">${esc(series.metric)}${series.counter ? ` · ${esc(series.counter)}` : ''}</span></td><td>${esc(series.group)}${series.instance ? `<span class="sub">${esc(series.instance)}</span>` : ''}</td><td class="num">${formatMetric(series.stats?.avg, series.unit)}</td><td class="num">${formatMetric(series.stats?.p95, series.unit)}</td><td class="num">${formatMetric(series.stats?.max, series.unit)}</td><td>${statusBadge(series.status)}</td></tr>`).join('')}
       </tbody></table></div>
       ${vm.list.length > 200 ? `<p class="chart-note">Showing the first 200 of ${vm.list.length} signals. Use All metrics to narrow the view.</p>` : ''}
     `,
@@ -1383,7 +1573,9 @@ export function renderInsights(ctx) {
 
 export function renderMetrics(ctx, query = {}) {
   const doc = ctx.doc;
-  const categories = ['all', 'cpu', 'memory', 'storage', 'network', 'power', 'other'];
+  const categoryIds = ['cpu', 'memory', 'storage', 'network', 'power', 'interrupt', 'other']
+    .filter((category) => (doc.summary?.categories?.[category]?.series || 0) > 0);
+  const categories = ['all', ...categoryIds];
   const initialCategory = categories.includes(query.category) ? query.category : 'all';
   const initialSearch = query.q || '';
   return {
@@ -1515,7 +1707,7 @@ export async function renderMetric(ctx, metricId) {
         <div>
           <div class="section-head" style="margin-top:.4rem"><div><h2>All entities</h2><p>Sorted by P95. Click a row to inspect the raw series.</p></div></div>
           <div class="table-wrap"><table class="data"><thead><tr><th>Entity</th><th>Group</th><th class="num">Avg</th><th class="num">P95</th><th class="num">Peak</th><th class="num">Samples</th><th>Status</th></tr></thead><tbody>
-            ${list.map((series) => `<tr class="clickable" data-href="${escapeAttr(seriesRoute(series.id))}"><td class="name"><a href="${escapeAttr(seriesRoute(series.id))}">${esc(seriesShortLabel(series))}</a><span class="sub">${esc(series.instance || series.entityKind)}</span></td><td>${esc(series.group)}</td><td class="num">${formatMetric(series.stats?.avg, series.unit)}</td><td class="num">${formatMetric(series.stats?.p95, series.unit)}</td><td class="num">${formatMetric(series.stats?.max, series.unit)}</td><td class="num">${series.stats?.count ?? 0}</td><td>${statusBadge(series.status)}</td></tr>`).join('')}
+            ${list.map((series) => `<tr class="clickable" data-href="${escapeAttr(seriesRoute(series.id))}"><td class="name"><a href="${escapeAttr(seriesRoute(series.id))}">${esc(seriesShortLabel(series))}</a><span class="sub">${esc(series.instance || series.entityKind)}${series.counter ? ` · ${esc(series.counter)}` : ''}</span></td><td>${esc(series.group)}</td><td class="num">${formatMetric(series.stats?.avg, series.unit)}</td><td class="num">${formatMetric(series.stats?.p95, series.unit)}</td><td class="num">${formatMetric(series.stats?.max, series.unit)}</td><td class="num">${series.stats?.count ?? 0}</td><td>${statusBadge(series.status)}</td></tr>`).join('')}
           </tbody></table></div>
         </div>
         <aside class="metric-side">
@@ -1778,7 +1970,7 @@ head -1 /vmfs/volumes/datastore1/esxtop-test.csv \
         <p class="dim">This example already has the storage panels partly enabled. If you want only storage, clear the fields in the other panels before pressing <code>W</code>. The exact field letters and line count are release-specific; use the interactive <code>f</code> panel as the source of truth.</p>
       </div>
 
-      <div class="callout accent mt-1"><strong>Large sample count?</strong> At 146,274 columns the default 20,000,000-cell guardrail allows 136 samples. Giving the container more RAM does not raise the cell limit. Open the <a href="#/guide">field guide</a> and choose <b>Sizing large captures</b> for the memory formula, sample-count table, recommended <code>ESXTOP_MAX_*</code> values and a 10 GB Compose example.</div>
+      <div class="callout accent mt-1"><strong>Large sample count?</strong> At 145,663 columns the default 20,000,000-cell guardrail allows 137 samples. Giving the container more RAM does not raise the cell limit. Open the <a href="#/guide">field guide</a> and choose <b>Sizing large captures</b> for the memory formula, sample-count table, recommended <code>ESXTOP_MAX_*</code> values and a 10 GB Compose example.</div>
 
       <div class="section-head"><div><div class="eyebrow">Step by step</div><h2>The exact workflow</h2></div><p>The sequence matters: configure interactively, save with <code>W</code>, then reference that file with <code>-c</code> in batch mode.</p></div>
       <div class="steps-grid">${stepHtml}</div>

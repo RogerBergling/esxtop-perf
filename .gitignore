@@ -1,6 +1,10 @@
 # ---------------------------------------------------------------------------
-# Secrets and local environment files
+# Local esxtop capture fixtures (may contain host/VM names)
+/perf.csv
+/perfall.csv
+
 # ---------------------------------------------------------------------------
+# Secrets and local environment files
 .env
 .env.*
 !.env.example

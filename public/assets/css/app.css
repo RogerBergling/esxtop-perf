@@ -731,3 +731,6 @@ table.data tr.clickable:hover td.name a { text-decoration: underline; }
 .report-category-grid { display: flex; flex-wrap: wrap; gap: .45rem .9rem; padding: .25rem 0 0; }
 .report-category-choice { font-size: .76rem; color: var(--text-soft); }
 .report-category-choice input { accent-color: var(--accent); }
+
+.upload-password-field { margin-top: .65rem; }
+.upload-password-field small { color: var(--dim); font-size: .68rem; line-height: 1.45; }

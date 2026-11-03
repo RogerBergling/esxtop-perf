@@ -18,6 +18,7 @@ import {
 } from './pages.js';
 
 const THEME_KEY = 'esxtop-lens-theme';
+const UPLOAD_PASSWORD_KEY = 'esxtop-lens-upload-password';
 const state = {
   doc: null,
   error: null,
@@ -49,6 +50,8 @@ const NAV_ITEMS = [
   ['memory', 'Memory', '#/memory'],
   ['storage', 'Storage', '#/storage'],
   ['network', 'Network', '#/network'],
+  ['power', 'Power', '#/power'],
+  ['interrupt', 'Interrupts', '#/interrupt'],
   ['vms', 'VMs', '#/vms'],
   ['insights', 'Insights', '#/insights'],
   ['report', 'Report', '#/report'],
@@ -82,6 +85,23 @@ function escapeRoute(value) {
   return encodeURIComponent(value);
 }
 
+function uploadPassword() {
+  try {
+    return window.sessionStorage.getItem(UPLOAD_PASSWORD_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function setUploadPassword(value) {
+  try {
+    if (value) window.sessionStorage.setItem(UPLOAD_PASSWORD_KEY, value);
+    else window.sessionStorage.removeItem(UPLOAD_PASSWORD_KEY);
+  } catch {
+    // Storage can be disabled by browser privacy settings; the field still works for this upload.
+  }
+}
+
 function parseHash() {
   const raw = (window.location.hash || '#/').replace(/^#/, '') || '/';
   const [pathPart, queryPart = ''] = raw.split('?');
@@ -101,7 +121,13 @@ function activeNav(route) {
 function updateChrome(route) {
   if (!nav) return;
   if (state.doc) {
-    nav.innerHTML = NAV_ITEMS.map(([key, label, href]) => `<a href="${href}" data-nav="${key}">${label}</a>`).join('');
+    const categoryCounts = state.doc.summary?.categories || {};
+    const visibleItems = NAV_ITEMS.filter(([key]) => {
+      if (key === 'vms') return true;
+      if (!['cpu', 'memory', 'storage', 'network', 'power', 'interrupt'].includes(key)) return true;
+      return (categoryCounts[key]?.series || 0) > 0;
+    });
+    nav.innerHTML = visibleItems.map(([key, label, href]) => `<a href="${href}" data-nav="${key}">${label}</a>`).join('');
   } else {
     nav.innerHTML = `<a href="#/import" data-nav="import">Import</a><a href="#/capture" data-nav="capture">Capture manual</a><a href="#/guide" data-nav="guide">Field guide</a>`;
   }
@@ -118,6 +144,7 @@ function updateChrome(route) {
   if (state.doc) {
     const title = {
       overview: 'Overview', cpu: 'CPU', memory: 'Memory', storage: 'Storage', network: 'Network',
+      power: 'Power', interrupt: 'Interrupts', other: 'Other signals',
       vms: 'Virtual machines', insights: 'Findings', metrics: 'Metric explorer', vm: 'VM detail', capture: 'Capture manual',
       metric: 'Metric detail', series: 'Signal detail',
     }[active] || 'Capture';
@@ -198,6 +225,13 @@ async function ensureSeries(ids) {
 
 function uploadFile(file) {
   if (!file) return;
+  const password = uploadPassword();
+  if (state.health?.uploadAuthRequired && !password) {
+    state.error = 'The server requires an upload password. Enter it on the import page before choosing a capture.';
+    window.location.hash = '#/import';
+    render();
+    return;
+  }
   if (state.health?.maxUploadBytes && file.size > state.health.maxUploadBytes) {
     state.error = `The file is ${(file.size / 1024 / 1024).toFixed(1)} MB, larger than the server limit of ${(state.health.maxUploadBytes / 1024 / 1024).toFixed(0)} MB.`;
     window.location.hash = '#/import';
@@ -209,6 +243,7 @@ function uploadFile(file) {
   xhr.open('POST', `/api/analyze?name=${escapeRoute(file.name)}`);
   xhr.responseType = 'json';
   xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+  if (password) xhr.setRequestHeader('X-ESXTOP-Upload-Password', password);
   xhr.upload.addEventListener('loadstart', () => {
     setLoading('Uploading capture…', 'Sending the capture to the local parser.', 3, `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} MB`);
   });
@@ -233,6 +268,9 @@ function uploadFile(file) {
       toast(`${document.meta.host || 'Capture'} loaded · ${document.meta.sampleCount} samples · ${document.meta.columns.toLocaleString()} signals`);
       render();
       return;
+    }
+    if (xhr.status === 401) {
+      state.health = { ...(state.health || {}), uploadAuthRequired: true };
     }
     const message = document?.error || `The server returned HTTP ${xhr.status}.`;
     state.error = message;
@@ -280,7 +318,7 @@ function pageFor(route) {
   const first = route.segments[0] || 'overview';
   if (first === 'overview' || route.segments.length === 0) return renderOverview;
   if (first === 'import') return renderImport;
-  if (['cpu', 'memory', 'storage', 'network', 'power', 'other'].includes(first)) {
+  if (['cpu', 'memory', 'storage', 'network', 'power', 'interrupt', 'other'].includes(first)) {
     return (context) => renderCategory(context, first);
   }
   if (first === 'vms') return renderVms;
@@ -310,6 +348,8 @@ async function render() {
     ensureSeries,
     toast,
     navigate: (hash) => { window.location.hash = hash; },
+    uploadPassword,
+    setUploadPassword,
     render,
   };
   try {
@@ -352,7 +392,7 @@ async function loadMetadata() {
   }
 }
 
-function init() {
+async function init() {
   applyTheme(initialTheme());
   document.querySelector('#theme-toggle')?.addEventListener('click', toggleTheme);
   newCapture?.addEventListener('click', () => globalFileInput?.click());
@@ -371,7 +411,7 @@ function init() {
       }
     }
   });
-  loadMetadata();
+  await loadMetadata();
   render();
 }
 

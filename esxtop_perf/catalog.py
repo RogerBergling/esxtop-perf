@@ -15,8 +15,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-APP_VERSION = "1.7.0"
-PARSER_VERSION = "1.3.0"
+APP_VERSION = "1.8.0"
+PARSER_VERSION = "1.4.0"
 
 REFERENCES: dict[str, dict[str, str]] = {
     "esxtop_metrics": {
@@ -938,20 +938,6 @@ METRIC_DEFS: dict[str, dict[str, Any]] = {
         "description": "VMkernel actions posted per second; an internal counter.",
         "refs": ["esxtop_metrics"],
     },
-    "NUMA_TOTAL_MB": {
-        "name": "NUMA node memory",
-        "unit": "MB",
-        "category": "memory",
-        "description": "Physical memory managed by one NUMA node.",
-        "refs": ["esxtop_metrics"],
-    },
-    "NUMA_FREE_MB": {
-        "name": "NUMA node free memory",
-        "unit": "MB",
-        "category": "memory",
-        "description": "Free memory on one NUMA node. Uneven free memory can influence placement and remote-memory pressure.",
-        "refs": ["esxtop_metrics"],
-    },
     "%ACTVS": {
         "name": "Active memory (slow average)",
         "unit": "%",
@@ -1025,6 +1011,240 @@ METRIC_DEFS: dict[str, dict[str, Any]] = {
     },
 }
 
+
+# ---------------------------------------------------------------------------
+# All-field capture coverage
+#
+# The entries below were added after auditing a full esxtop -a capture with
+# every field enabled on the CPU, memory, storage, network, interrupt and
+# power panels. They preserve the raw values but give the UI stable IDs,
+# units and categories instead of falling back to RAW:* labels.
+#
+# Allocation counters that share a display name across CPU and memory panels
+# are resolved contextually in canonical_metric().
+# ---------------------------------------------------------------------------
+METRIC_DEFS.update({
+    # ------------------------------------------------------------- CPU allocation
+    "CPU_ALLOC_MAX": {
+        "name": "CPU allocation maximum",
+        "unit": "MHz",
+        "category": "cpu",
+        "description": "Configured CPU allocation limit for a group or world. The value -1 means unlimited.",
+        "refs": ["esxtop_metrics"],
+    },
+    "CPU_ALLOC_MIN": {
+        "name": "CPU allocation minimum",
+        "unit": "MHz",
+        "category": "cpu",
+        "description": "Configured CPU reservation for a group or world. A value of 0 means no reservation.",
+        "refs": ["esxtop_metrics"],
+    },
+    "CPU_ALLOC_MIN_LIMITED": {
+        "name": "CPU allocation minimum limited",
+        "unit": "",
+        "category": "cpu",
+        "description": "Undocumented esxtop allocation-limit flag. Preserved as captured rather than interpreted.",
+        "refs": ["esxtop_metrics"],
+    },
+    "CPU_ALLOC_SHARES": {
+        "name": "CPU allocation shares",
+        "unit": "",
+        "category": "cpu",
+        "description": "Configured CPU shares. Negative values are predefined share levels; custom values are shown directly.",
+        "refs": ["esxtop_metrics"],
+    },
+    "CPU_EFFECTIVE_MIN_MHZ": {
+        "name": "Effective CPU minimum",
+        "unit": "MHz",
+        "category": "cpu",
+        "description": "Effective minimum CPU allocation, in MHz, that the group receives when groups compete for CPU resources.",
+        "refs": ["esxtop_metrics"],
+    },
+    "CPU_EXCLUSIVE_AFFINITY": {
+        "name": "Exclusive CPU affinity",
+        "unit": "",
+        "category": "cpu",
+        "description": "Exclusive CPU-affinity setting captured from the group or world. Interpret with the host affinity policy.",
+        "refs": ["esxtop_metrics"],
+    },
+    "CPU_MEMBERS": {
+        "name": "CPU group members",
+        "unit": "",
+        "category": "cpu",
+        "description": "Number of worlds in this CPU group.",
+        "refs": ["esxtop_metrics"],
+    },
+    "CPU_TIMERS": {
+        "name": "World timers",
+        "unit": "/s",
+        "category": "cpu",
+        "description": "Timer rate for the world.",
+        "refs": ["esxtop_metrics"],
+    },
+    "VCPU_PCPU_ID": {
+        "name": "Physical CPU",
+        "unit": "",
+        "category": "cpu",
+        "description": "Physical or logical CPU on which the vCPU world was running when the sample was taken.",
+        "refs": ["esxtop_metrics"],
+    },
+    "VM_POWER_W": {
+        "name": "VM power usage",
+        "unit": "W",
+        "category": "power",
+        "description": "Power consumption attributed to the virtual machine group, based on host power-supply telemetry.",
+        "refs": ["esxtop_metrics"],
+    },
+
+    # ------------------------------------------------------------- CPU power state
+    "PCPU_APERF_MPERF": {
+        "name": "aperf/mperf ratio",
+        "unit": "%",
+        "category": "power",
+        "description": "Ratio of actual to maximum performance frequency, expressed as a percentage. Values above 100% can indicate turbo frequency.",
+        "refs": ["esxtop_metrics"],
+    },
+    "CSTATE_C0": {"name": "%C-State C0", "unit": "%", "category": "power", "description": "Share of time the physical CPU spent in C-state C0 (active).", "refs": ["esxtop_metrics"]},
+    "CSTATE_C1": {"name": "%C-State C1", "unit": "%", "category": "power", "description": "Share of time the physical CPU spent in C-state C1 (halted).", "refs": ["esxtop_metrics"]},
+    "CSTATE_C2": {"name": "%C-State C2", "unit": "%", "category": "power", "description": "Share of time the physical CPU spent in C-state C2 (deeper halt).", "refs": ["esxtop_metrics"]},
+    "TSTATE_T0": {"name": "%T-State T0", "unit": "%", "category": "power", "description": "Share of time the physical CPU spent in T-state T0.", "refs": ["esxtop_metrics"]},
+    "TSTATE_T1": {"name": "%T-State T1", "unit": "%", "category": "power", "description": "Share of time the physical CPU spent in T-state T1.", "refs": ["esxtop_metrics"]},
+    "TSTATE_T2": {"name": "%T-State T2", "unit": "%", "category": "power", "description": "Share of time the physical CPU spent in T-state T2.", "refs": ["esxtop_metrics"]},
+    "TSTATE_T3": {"name": "%T-State T3", "unit": "%", "category": "power", "description": "Share of time the physical CPU spent in T-state T3.", "refs": ["esxtop_metrics"]},
+    "TSTATE_T4": {"name": "%T-State T4", "unit": "%", "category": "power", "description": "Share of time the physical CPU spent in T-state T4.", "refs": ["esxtop_metrics"]},
+    "TSTATE_T5": {"name": "%T-State T5", "unit": "%", "category": "power", "description": "Share of time the physical CPU spent in T-state T5.", "refs": ["esxtop_metrics"]},
+    "TSTATE_T6": {"name": "%T-State T6", "unit": "%", "category": "power", "description": "Share of time the physical CPU spent in T-state T6.", "refs": ["esxtop_metrics"]},
+    "TSTATE_T7": {"name": "%T-State T7", "unit": "%", "category": "power", "description": "Share of time the physical CPU spent in T-state T7.", "refs": ["esxtop_metrics"]},
+
+    # ---------------------------------------------------------- Memory allocation
+    "MEM_ALLOC_MAX": {
+        "name": "Memory allocation maximum",
+        "unit": "MB",
+        "category": "memory",
+        "description": "Memory limit for the group in MB. A value of -1 means unlimited.",
+        "refs": ["esxtop_metrics"],
+    },
+    "MEM_ALLOC_MIN": {
+        "name": "Memory allocation minimum",
+        "unit": "MB",
+        "category": "memory",
+        "description": "Memory reservation for the group in MB. A value of 0 means no reservation.",
+        "refs": ["esxtop_metrics"],
+    },
+    "MEM_ALLOC_MIN_LIMITED": {
+        "name": "Memory allocation minimum limited",
+        "unit": "",
+        "category": "memory",
+        "description": "Undocumented esxtop memory allocation-limit flag. Preserved as captured rather than interpreted.",
+        "refs": ["esxtop_metrics"],
+    },
+    "MEM_ALLOC_SHARES": {
+        "name": "Memory allocation shares",
+        "unit": "",
+        "category": "memory",
+        "description": "Configured memory shares. Negative values are predefined share levels; custom values are shown directly.",
+        "refs": ["esxtop_metrics"],
+    },
+    "MEM_MEMBERS": {
+        "name": "Memory group members",
+        "unit": "",
+        "category": "memory",
+        "description": "Number of worlds in this memory group.",
+        "refs": ["esxtop_metrics"],
+    },
+    "CHECKPOINT_READ_MB": {"name": "Checkpoint read", "unit": "MB", "category": "memory", "description": "Data read from a VM checkpoint file when a suspended VM is resumed.", "refs": ["esxtop_metrics"]},
+    "CHECKPOINT_TARGET_MB": {"name": "Checkpoint target", "unit": "MB", "category": "memory", "description": "Size of the VM checkpoint file.", "refs": ["esxtop_metrics"]},
+    "COMMIT_CHARGED_MB": {"name": "Commit charged", "unit": "MB", "category": "memory", "description": "Memory commitment charged against the VM or group.", "refs": ["esxtop_metrics"]},
+    "COMMIT_PAGES_PER_SHARE": {"name": "Commit pages per share", "unit": "", "category": "memory", "description": "Committed pages per share as reported by esxtop. The value is preserved without inventing a unit.", "refs": ["esxtop_metrics"]},
+    "COMMIT_TARGET_MB": {"name": "Commit target", "unit": "MB", "category": "memory", "description": "Target memory commitment for the VM or group.", "refs": ["esxtop_metrics"]},
+    "COW_HINT_MB": {"name": "Copy-on-write hint", "unit": "MB", "category": "memory", "description": "Guest physical pages marked as copy-on-write sharing hints.", "refs": ["esxtop_metrics"]},
+    "GUEST_MEM_NUMA": {"name": "Guest memory on NUMA node", "unit": "MB", "category": "memory", "description": "Guest memory resident on a specific NUMA node. The counter name identifies the node.", "refs": ["esxtop_metrics"]},
+    "MEM_MIN_COMMIT_TARGET_MB": {"name": "Minimum commit target", "unit": "MB", "category": "memory", "description": "Minimum commit target for the VM or group.", "refs": ["esxtop_metrics"]},
+    "NUMA_HOME_NODES": {"name": "NUMA home nodes", "unit": "", "category": "memory", "description": "Current NUMA home node or nodes for the VM. A VM can have multiple home nodes when its vCPU count exceeds the cores per socket.", "refs": ["esxtop_metrics"]},
+    "NUMA_REBALANCE_DELTA": {"name": "NUMA rebalance count delta", "unit": "", "category": "memory", "description": "Change in the NUMA rebalance counter over the sample interval.", "refs": ["esxtop_metrics"]},
+    "OVERHEAD_MB": {"name": "VM overhead memory", "unit": "MB", "category": "memory", "description": "Overhead memory currently consumed by the VM.", "refs": ["esxtop_metrics"]},
+    "OVERHEAD_MAX_MB": {"name": "VM overhead memory maximum", "unit": "MB", "category": "memory", "description": "Reserved overhead memory for the entire VM.", "refs": ["esxtop_metrics"]},
+    "OVERHEAD_UW_MB": {"name": "VM overhead memory (user world)", "unit": "MB", "category": "memory", "description": "Overhead memory reserved for the VMX user world.", "refs": ["esxtop_metrics"]},
+    "VMM_OVERHEAD_NUMA": {"name": "VMM overhead memory on NUMA node", "unit": "MB", "category": "memory", "description": "VMM overhead memory resident on a specific NUMA node. The counter name identifies the node.", "refs": ["esxtop_metrics"]},
+    "ZERO_MB": {"name": "Zeroed memory", "unit": "MB", "category": "memory", "description": "Guest physical pages that are all zero and can be reclaimed or shared.", "refs": ["esxtop_metrics"]},
+    "KERNEL_STATE": {"name": "Kernel memory state", "unit": "", "category": "memory", "description": "VMkernel memory-state code reported by the Memory panel. Preserved as a numeric state, not charted as a performance rate.", "refs": ["esxtop_metrics"]},
+    "PSHARE_COMMON_MB": {"name": "Page-shared common memory", "unit": "MB", "category": "memory", "description": "Memory shared through transparent page sharing, common pages. This is separate from PShare Shared MBytes and must not be combined with it.", "refs": ["esxtop_metrics"]},
+
+    # ---------------------------------------------------------------- Interrupts
+    "INT_COUNT/s": {
+        "name": "Interrupts",
+        "unit": "/s",
+        "category": "interrupt",
+        "description": "Interrupts per second for an interrupt cookie, optionally broken down by physical CPU.",
+        "refs": ["esxtop_metrics"],
+    },
+    "INT_TIME/us": {
+        "name": "Interrupt processing time",
+        "unit": "µs",
+        "category": "interrupt",
+        "description": "Average processing time in microseconds per interrupt for a cookie or vector. Compare with interrupt rate before attributing CPU cost to a device.",
+        "refs": ["esxtop_metrics"],
+    },
+
+    # -------------------------------------------------------------- Storage core
+    "QAVG/rd": {"name": "Queue read latency", "unit": "ms", "category": "storage", "description": "Average queue latency per read command in milliseconds.", "refs": ["esxtop_storage"]},
+    "QAVG/wr": {"name": "Queue write latency", "unit": "ms", "category": "storage", "description": "Average queue latency per write command in milliseconds.", "refs": ["esxtop_storage"]},
+    "FMBRD/s": {"name": "Failed read bytes", "unit": "B/s", "category": "storage", "description": "Bytes per second in failed read operations. Any sustained value is a storage-path error signal.", "refs": ["esxtop_storage"]},
+    "FMBWR/s": {"name": "Failed written bytes", "unit": "B/s", "category": "storage", "description": "Bytes per second in failed write operations. Any sustained value is a storage-path error signal.", "refs": ["esxtop_storage"]},
+    "FRESV/s": {"name": "Failed reserves", "unit": "/s", "category": "storage", "description": "Failed SCSI reservation operations per second.", "refs": ["esxtop_storage"]},
+    "PAECMD/s": {"name": "PAE commands", "unit": "/s", "category": "storage", "description": "Physical address extension commands per second. Applies to storage paths.", "refs": ["esxtop_storage"]},
+    "PAECP/s": {"name": "PAE copies", "unit": "/s", "category": "storage", "description": "Physical address extension copies per second. Applies to storage paths.", "refs": ["esxtop_storage"]},
+    "SHARES": {"name": "Storage shares", "unit": "", "category": "storage", "description": "Storage shares configured for the device/world queue.", "refs": ["esxtop_storage"]},
+
+    # ------------------------------------------------------------- Virtual disk
+    "VSCSI_LATENCY": {"name": "Virtual disk aggregate latency", "unit": "ms", "category": "storage", "description": "Vendor aggregate virtual-disk latency field. Use LAT/rd and LAT/wr for the read/write split; the exact aggregation is release-specific.", "refs": ["esxtop_storage"]},
+    "TOTAL_IO": {"name": "Total I/Os", "unit": "", "category": "storage", "description": "Total I/O operations reported for the virtual disk during the sample.", "refs": ["esxtop_storage"]},
+    "FAILED_IO": {"name": "Failed I/Os", "unit": "", "category": "storage", "description": "Failed I/O operations reported for the virtual disk during the sample.", "refs": ["esxtop_storage"]},
+    "UNMAP_TOTAL/s": {"name": "Total UNMAPs", "unit": "/s", "category": "storage", "description": "Total UNMAP operations per second for the virtual disk.", "refs": ["esxtop_storage"]},
+    "UNMAP_SUC/s": {"name": "Successful UNMAPs", "unit": "/s", "category": "storage", "description": "Successful UNMAP operations per second for the virtual disk.", "refs": ["esxtop_storage"]},
+    "UNMAP_FAIL/s": {"name": "Failed UNMAPs", "unit": "/s", "category": "storage", "description": "Failed UNMAP operations per second for the virtual disk.", "refs": ["esxtop_storage"]},
+    "UNMAP_SUC_MB/s": {"name": "Successful UNMAP throughput", "unit": "MB/s", "category": "storage", "description": "Data unmapped successfully per second.", "refs": ["esxtop_storage"]},
+    "UNMAP_FAIL_MB/s": {"name": "Failed UNMAP throughput", "unit": "MB/s", "category": "storage", "description": "Data in failed UNMAP operations per second.", "refs": ["esxtop_storage"]},
+
+    # ------------------------------------------------------- VAAI / SCSI extended
+    "DELETE": {"name": "UNMAP deletes", "unit": "", "category": "storage", "description": "Successful UNMAP/delete operations. The counter is not a rate; see DELETE_F for failures.", "refs": ["esxtop_storage", "yellow_bricks"]},
+    "ATS": {"name": "Atomic test-and-set operations", "unit": "", "category": "storage", "description": "VAAI atomic test-and-set operations. See ATSF for failures.", "refs": ["esxtop_storage"]},
+    "CLONE_RD": {"name": "Clone reads", "unit": "", "category": "storage", "description": "VAAI clone read operations.", "refs": ["esxtop_storage"]},
+    "CLONE_WR": {"name": "Clone writes", "unit": "", "category": "storage", "description": "VAAI clone write operations.", "refs": ["esxtop_storage"]},
+    "CLONE_F": {"name": "Clone failed", "unit": "", "category": "storage", "description": "Failed VAAI clone operations.", "refs": ["esxtop_storage"]},
+    "LCLONE_RD": {"name": "Large clone reads", "unit": "", "category": "storage", "description": "Large-clone read operations reported by the SCSI device panel.", "refs": ["esxtop_storage"]},
+    "LCLONE_WR": {"name": "Large clone writes", "unit": "", "category": "storage", "description": "Large-clone write operations reported by the SCSI device panel.", "refs": ["esxtop_storage"]},
+    "LCLONE_F": {"name": "Large clone failed", "unit": "", "category": "storage", "description": "Failed large-clone operations reported by the SCSI device panel.", "refs": ["esxtop_storage"]},
+    "EXTSTATS": {"name": "Extended-stat operations", "unit": "", "category": "storage", "description": "VAAI extended-statistics operations. The exact vendor implementation is release-specific.", "refs": ["esxtop_storage"]},
+    "EXTSTATS_F": {"name": "Extended-stat failures", "unit": "", "category": "storage", "description": "Failed VAAI extended-statistics operations.", "refs": ["esxtop_storage"]},
+    "RESSPACE": {"name": "Reserve-space operations", "unit": "", "category": "storage", "description": "VAAI reserve-space operations. The exact vendor implementation is release-specific.", "refs": ["esxtop_storage"]},
+    "RESSPACE_F": {"name": "Reserve-space failures", "unit": "", "category": "storage", "description": "Failed VAAI reserve-space operations.", "refs": ["esxtop_storage"]},
+    "ZERO": {"name": "Zero operations", "unit": "", "category": "storage", "description": "VAAI zero operations. See ZERO_F for failures.", "refs": ["esxtop_storage"]},
+    "ZERO_F": {"name": "Zero failures", "unit": "", "category": "storage", "description": "Failed VAAI zero operations.", "refs": ["esxtop_storage"]},
+    "MBC_RD/s": {"name": "Clone read throughput", "unit": "MB/s", "category": "storage", "description": "Data read per second by VAAI clone operations.", "refs": ["esxtop_storage"]},
+    "MBC_WR/s": {"name": "Clone write throughput", "unit": "MB/s", "category": "storage", "description": "Data written per second by VAAI clone operations.", "refs": ["esxtop_storage"]},
+    "MBDELE/s": {"name": "UNMAP delete throughput", "unit": "MB/s", "category": "storage", "description": "Data per second in successful UNMAP/delete operations.", "refs": ["esxtop_storage"]},
+    "MBZERO/s": {"name": "Zero throughput", "unit": "MB/s", "category": "storage", "description": "Data zeroed per second by VAAI zero operations.", "refs": ["esxtop_storage"]},
+    "ATS_SUC_MS": {"name": "ATS success latency", "unit": "ms", "category": "storage", "description": "Average successful ATS operation latency in milliseconds.", "refs": ["esxtop_storage"]},
+    "ATS_FAIL_MS": {"name": "ATS failure latency", "unit": "ms", "category": "storage", "description": "Average failed ATS operation latency in milliseconds.", "refs": ["esxtop_storage"]},
+    "CLONE_SUC_MS": {"name": "Clone success latency", "unit": "ms", "category": "storage", "description": "Average successful clone operation latency in milliseconds.", "refs": ["esxtop_storage"]},
+    "CLONE_FAIL_MS": {"name": "Clone failure latency", "unit": "ms", "category": "storage", "description": "Average failed clone operation latency in milliseconds.", "refs": ["esxtop_storage"]},
+    "LCLONE_SUC_MS": {"name": "Large-clone success latency", "unit": "ms", "category": "storage", "description": "Average successful large-clone operation latency in milliseconds.", "refs": ["esxtop_storage"]},
+    "LCLONE_FAIL_MS": {"name": "Large-clone failure latency", "unit": "ms", "category": "storage", "description": "Average failed large-clone operation latency in milliseconds.", "refs": ["esxtop_storage"]},
+    "EXTSTATS_SUC_MS": {"name": "Extended-stat success latency", "unit": "ms", "category": "storage", "description": "Average successful extended-stat operation latency in milliseconds.", "refs": ["esxtop_storage"]},
+    "EXTSTATS_FAIL_MS": {"name": "Extended-stat failure latency", "unit": "ms", "category": "storage", "description": "Average failed extended-stat operation latency in milliseconds.", "refs": ["esxtop_storage"]},
+    "RESSPACE_SUC_MS": {"name": "Reserve-space success latency", "unit": "ms", "category": "storage", "description": "Average successful reserve-space operation latency in milliseconds.", "refs": ["esxtop_storage"]},
+    "RESSPACE_FAIL_MS": {"name": "Reserve-space failure latency", "unit": "ms", "category": "storage", "description": "Average failed reserve-space operation latency in milliseconds.", "refs": ["esxtop_storage"]},
+    "ZERO_SUC_MS": {"name": "Zero success latency", "unit": "ms", "category": "storage", "description": "Average successful zero-operation latency in milliseconds.", "refs": ["esxtop_storage"]},
+    "ZERO_FAIL_MS": {"name": "Zero failure latency", "unit": "ms", "category": "storage", "description": "Average failed zero-operation latency in milliseconds.", "refs": ["esxtop_storage"]},
+
+    # ------------------------------------------------------------------ Network
+    "PKTTXBRD/s": {"name": "Broadcast packets transmitted", "unit": "/s", "category": "network", "description": "Broadcast packets transmitted per second on the port.", "refs": ["esxtop_metrics"]},
+    "PKTRXBRD/s": {"name": "Broadcast packets received", "unit": "/s", "category": "network", "description": "Broadcast packets received per second on the port.", "refs": ["esxtop_metrics"]},
+    "PKTTXMUL/s": {"name": "Multicast packets transmitted", "unit": "/s", "category": "network", "description": "Multicast packets transmitted per second on the port.", "refs": ["esxtop_metrics"]},
+    "PKTRXMUL/s": {"name": "Multicast packets received", "unit": "/s", "category": "network", "description": "Multicast packets received per second on the port.", "refs": ["esxtop_metrics"]},
+})
+
 # Human-readable and abbreviated counter names. Keys are lower-case and
 # whitespace-collapsed. Context-specific aliases are handled below.
 _ALIASES: dict[str, str] = {
@@ -1068,7 +1288,6 @@ _ALIASES: dict[str, str] = {
     "kernel unreserved mbytes": "KERNEL_UNRESERVED_MB",
     "total mbytes": "NUMA_TOTAL_MB",
     "pshare shared mbytes": "PSHARE_SHARED_MB",
-    "pshare common mbytes": "PSHARE_SHARED_MB",
     "pshare savings mbytes": "PSHARE_SAVED_MB",
     "swap used mbytes": "SWAP_USED_MB",
     "swap target mbytes": "SWAP_TARGET_MB",
@@ -1168,12 +1387,127 @@ _ALIASES: dict[str, str] = {
     "power usage cap watts": "POWER_CAP",
     "vsan enabled?": "VSAN_ENABLED",
     "standard deviation of latency": "SDLAT",
+    # CPU allocation and interrupt/power fields
+    "alloc max": "CPU_ALLOC_MAX",
+    "alloc min": "CPU_ALLOC_MIN",
+    "alloc min limited": "CPU_ALLOC_MIN_LIMITED",
+    "alloc shares": "CPU_ALLOC_SHARES",
+    "effective min (mhz)": "CPU_EFFECTIVE_MIN_MHZ",
+    "exclusive affinity": "CPU_EXCLUSIVE_AFFINITY",
+    "exclusive affiniy": "CPU_EXCLUSIVE_AFFINITY",
+    "members": "CPU_MEMBERS",
+    "power usage watts": "VM_POWER_W",
+    "timers/sec": "CPU_TIMERS",
+    "timer/sec": "CPU_TIMERS",
+    "physical cpu": "VCPU_PCPU_ID",
+    "% of aperf/mperf": "PCPU_APERF_MPERF",
+    "%c-state c0": "CSTATE_C0",
+    "%c-state c1": "CSTATE_C1",
+    "%c-state c2": "CSTATE_C2",
+    "%t-state t0": "TSTATE_T0",
+    "%t-state t1": "TSTATE_T1",
+    "%t-state t2": "TSTATE_T2",
+    "%t-state t3": "TSTATE_T3",
+    "%t-state t4": "TSTATE_T4",
+    "%t-state t5": "TSTATE_T5",
+    "%t-state t6": "TSTATE_T6",
+    "%t-state t7": "TSTATE_T7",
+    # Memory human names not covered by the original catalogue
+    "% active estimate": "%ACTV",
+    "% active slow estimate": "%ACTVS",
+    "% active fast estimate": "%ACTVF",
+    "% active next estimate": "%ACTVN",
+    "checkpoint read mbytes": "CHECKPOINT_READ_MB",
+    "checkpoint target mbytes": "CHECKPOINT_TARGET_MB",
+    "commit charged mbytes": "COMMIT_CHARGED_MB",
+    "commit pages per share": "COMMIT_PAGES_PER_SHARE",
+    "commit target mbytes": "COMMIT_TARGET_MB",
+    "copy on write hint mbytes": "COW_HINT_MB",
+    "min commit target mbytes": "MEM_MIN_COMMIT_TARGET_MB",
+    "numa home nodes": "NUMA_HOME_NODES",
+    "numa rebalance count delta": "NUMA_REBALANCE_DELTA",
+    "overhead mbytes": "OVERHEAD_MB",
+    "overhead max mbytes": "OVERHEAD_MAX_MB",
+    "overhead uw mbytes": "OVERHEAD_UW_MB",
+    "zero mbytes": "ZERO_MB",
+    "kernel state": "KERNEL_STATE",
+    "pshare common mbytes": "PSHARE_COMMON_MB",
+    "pshare shared mbytes": "PSHARE_SHARED_MB",
+    # Network
+    "broadcast packets received/sec": "PKTRXBRD/s",
+    "broadcast packets transmitted/sec": "PKTTXBRD/s",
+    "multicast packets received/sec": "PKTRXMUL/s",
+    "multicast packets transmitted/sec": "PKTTXMUL/s",
+    "link speed (mb/s)": "SPEED",
+    # Interrupt
+    "interrupts/second": "INT_COUNT/s",
+    "processing time microsec/interrupt": "INT_TIME/us",
+    # Storage additions
+    "failed bytes read/sec": "FMBRD/s",
+    "failed bytes written/sec": "FMBWR/s",
+    "failed reserves/sec": "FRESV/s",
+    "pae commands/sec": "PAECMD/s",
+    "pae copies/sec": "PAECP/s",
+    "shares": "SHARES",
+    "average millisec/read": "LAT/rd",
+    "average millisec/write": "LAT/wr",
+    "latency": "VSCSI_LATENCY",
+    "totalios": "TOTAL_IO",
+    "failedios": "FAILED_IO",
+    "total unmaps/secs": "UNMAP_TOTAL/s",
+    "successful unmaps/secs": "UNMAP_SUC/s",
+    "failed unmaps/secs": "UNMAP_FAIL/s",
+    "successful unmaps in mbytes/sec": "UNMAP_SUC_MB/s",
+    "failed unmaps in mbytes/sec": "UNMAP_FAIL_MB/s",
+    "delete": "DELETE",
+    "deletes failed": "DELETE_F",
+    "ats": "ATS",
+    "ats failed": "ATSF",
+    "creads": "CLONE_RD",
+    "cwrites": "CLONE_WR",
+    "cfailed": "CLONE_F",
+    "lcreads": "LCLONE_RD",
+    "lcwrites": "LCLONE_WR",
+    "lcfailed": "LCLONE_F",
+    "extstats": "EXTSTATS",
+    "extstats failed": "EXTSTATS_F",
+    "resspace": "RESSPACE",
+    "resspace failed": "RESSPACE_F",
+    "zeros": "ZERO",
+    "zeros failed": "ZERO_F",
+    "mbytes creads/sec": "MBC_RD/s",
+    "mbytes cwrites/sec": "MBC_WR/s",
+    "mbytes deletes/sec": "MBDELE/s",
+    "mbytes zeroed/sec": "MBZERO/s",
+    "average success latency ms/ats": "ATS_SUC_MS",
+    "average failure latency ms/ats": "ATS_FAIL_MS",
+    "average success latency ms/clone": "CLONE_SUC_MS",
+    "average failure latency ms/clone": "CLONE_FAIL_MS",
+    "average success latency ms/lclone": "LCLONE_SUC_MS",
+    "average failure latency ms/lclone": "LCLONE_FAIL_MS",
+    "average success latency ms/extstats": "EXTSTATS_SUC_MS",
+    "average failure latency ms/extstats": "EXTSTATS_FAIL_MS",
+    "average success latency ms/resspace": "RESSPACE_SUC_MS",
+    "average failure latency ms/resspace": "RESSPACE_FAIL_MS",
+    "average success latency ms/zero": "ZERO_SUC_MS",
+    "average failure latency ms/zero": "ZERO_FAIL_MS",
 }
 
 # Direct abbreviations are also accepted in case a capture was produced with a
 # custom esxtop field order.
 for _canonical in METRIC_DEFS:
     _ALIASES.setdefault(_canonical.lower(), _canonical)
+
+# Compact lookup is used for counters that differ only by spaces/underscores.
+# Building this once avoids scanning every alias for every header column; that
+# matters when a capture contains more than 100,000 columns.
+def _compact_alias_key(value: str) -> str:
+    return re.sub(r"[\s_]+", "", value)
+
+
+_COMPACT_ALIASES: dict[str, str] = {}
+for _candidate, _target in _ALIASES.items():
+    _COMPACT_ALIASES.setdefault(_compact_alias_key(_candidate), _target)
 
 
 def _norm(value: str) -> str:
@@ -1245,18 +1579,51 @@ def canonical_metric(group: str, counter: str) -> str:
     if key == "memory overcommit (1 minute avg)":
         return "OVERCOMMIT1"
 
+    # Allocation names are reused by the CPU and memory panels with different
+    # units and meanings. Resolve them by panel family before the generic alias
+    # table is consulted.
+    if key in {"alloc max", "alloc min", "alloc min limited", "alloc shares", "members"}:
+        suffix = {
+            "alloc max": "ALLOC_MAX",
+            "alloc min": "ALLOC_MIN",
+            "alloc min limited": "ALLOC_MIN_LIMITED",
+            "alloc shares": "ALLOC_SHARES",
+            "members": "MEMBERS",
+        }[key]
+        if family == "memory":
+            return f"MEM_{suffix}"
+        if family == "cpu":
+            return f"CPU_{suffix}"
+
+    # NUMA-node counters embed a node number. Normalise the node index so the
+    # same metric definition works on hosts with more than two NUMA nodes.
+    if re.fullmatch(r"guest memory on numa node \d+", key):
+        return "GUEST_MEM_NUMA"
+    if re.fullmatch(r"vmm overhead memory on numa node \d+", key):
+        return "VMM_OVERHEAD_NUMA"
+
+    # The vSAN panel uses a bare "Enabled?" field while the export path itself
+    # carries the vSAN context.
+    if key == "enabled?" and group.strip().lower().startswith("vsan"):
+        return "VSAN_ENABLED"
+    if key in {"count/s", "count/sec"} and family == "interrupt":
+        return "INT_COUNT/s"
+
     alias = _ALIASES.get(key)
     if alias:
         return alias
 
     # Some captures keep a unit suffix such as "% Ready " or "%Ready".
     compact = re.sub(r"[\s_]+", "", key)
-    for candidate, target in _ALIASES.items():
-        if re.sub(r"[\s_]+", "", candidate) == compact:
-            return target
+    alias = _COMPACT_ALIASES.get(compact)
+    if alias:
+        return alias
 
-    # Unknown metrics keep a readable, deterministic ID.
-    return f"RAW:{counter.strip()}"
+    # Unknown metrics keep a readable, deterministic ID. Include the panel
+    # family and group so identically named counters from different panels
+    # cannot merge.
+    group_slug = re.sub(r"[^A-Za-z0-9]+", "_", group.strip()).strip("_") or "host"
+    return f"RAW:{family}:{group_slug}:{counter.strip()}"
 
 
 def metric_definition(metric_id: str, counter: str) -> dict[str, Any]:
@@ -1279,18 +1646,22 @@ def metric_definition(metric_id: str, counter: str) -> dict[str, Any]:
 
 def infer_unit(counter: str) -> str:
     value = counter.strip().lower()
-    if value.startswith("%") or "% " in value or value.endswith(" %"):
+    if value.startswith("%") or "% " in value or value.endswith(" %") or "c-state" in value or "t-state" in value:
         return "%"
-    if "mbytes" in value or re.search(r"\bmb\b", value):
+    if "microsec" in value or "/interrupt" in value:
+        return "µs"
+    if "mbit" in value or "mbps" in value or "link speed" in value:
+        return "Mbps"
+    if "mbytes" in value or "mbyte" in value or re.search(r"\bmb\b", value):
         return "MB/s" if "sec" in value else "MB"
-    if "millisec" in value or ("latency" in value and "ms" not in value):
+    if "millisec" in value or "latency ms/" in value or ("latency" in value and "ms" not in value and "microsec" not in value):
         return "ms"
     if "mhz" in value:
         return "MHz"
     if "watt" in value:
         return "W"
-    if "mbit" in value or "mbps" in value:
-        return "Mbps"
+    if value.endswith("bytes/sec") or "failed bytes" in value:
+        return "B/s"
     if "bytes" in value:
         return "bytes"
     if "/sec" in value or "/s" in value:

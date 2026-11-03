@@ -6,6 +6,10 @@ import {
   formatDuration,
   formatMetric,
   formatNumber,
+  hasAllMetric,
+  hasAnyMetric,
+  hasMetric,
+  hasVcpuSeries,
   statusLabel,
   vmSummary,
   worstStatus,
@@ -214,7 +218,7 @@ function reportFindings(findings) {
   }).join('');
 }
 
-function reportActions(findings, categories = new Set(REPORT_CATEGORIES)) {
+function reportActions(findings, categories = new Set(REPORT_CATEGORIES), doc = null) {
   const priority = { critical: 'P1', warning: 'P2', info: 'P3' };
   const groups = [
     ['critical', 'Critical actions'],
@@ -237,18 +241,18 @@ function reportActions(findings, categories = new Set(REPORT_CATEGORIES)) {
   }).join('');
 
   const decisionRows = [
-    ['%RDY high, %MLMTD > 0', 'The VM or resource pool has a CPU limit. Remove or raise the limit before adding hardware.', 'cpu'],
-    ['%RDY high, %MLMTD = 0', 'Host scheduling contention. Reduce vCPUs, move the VM, or add CPU capacity.', 'cpu'],
-    ['%CSTP high', 'SMP co-scheduling pressure. Review vCPU count and guest workload balance.', 'cpu'],
-    ['%SWPWT / SWCUR / MCTLSZ high', 'Memory pressure or a limit. Check host free memory, reservations and VM limits.', 'memory'],
-    ['N%L low', 'NUMA locality. Resize the VM to fit a node or let vSphere place it correctly.', 'memory'],
-    ['KAVG high', 'VMkernel/vSCSI delay. Check queue depth, paths, vSCSI and host CPU pressure.', 'storage'],
-    ['DAVG high', 'Device/array delay. Check the array, SAN fabric, HBA and path health.', 'storage'],
-    ['GAVG high', 'Split it: GAVG = DAVG + KAVG. Fix the layer that dominates.', 'storage'],
-    ['QUED / %USD high', 'Queue saturation. Check DQLEN/AQLEN and whether the backend can absorb more depth.', 'storage'],
-    ['ABRTS/s, RESETS/s or CONS/s', 'Hard storage-path errors or reservation conflicts. Treat as an incident before tuning.', 'storage'],
-    ['%DRPTX / %DRPRX', 'Network drops. Check the uplink, physical switch, teaming and traffic shaping.', 'network'],
-  ].filter((row) => categories.has(row[2]));
+    ['%RDY high, %MLMTD > 0', 'The VM or resource pool has a CPU limit. Remove or raise the limit before adding hardware.', 'cpu', ['%RDY', '%MLMTD'], true],
+    ['%RDY high, %MLMTD = 0', 'Host scheduling contention. Reduce vCPUs, move the VM, or add CPU capacity.', 'cpu', ['%RDY']],
+    ['%CSTP high', 'SMP co-scheduling pressure. Review vCPU count and guest workload balance.', 'cpu', ['%CSTP']],
+    ['%SWPWT / SWCUR / MCTLSZ high', 'Memory pressure or a limit. Check host free memory, reservations and VM limits.', 'memory', ['%SWPWT', 'SWCUR', 'MCTLSZ']],
+    ['N%L low', 'NUMA locality. Resize the VM to fit a node or let vSphere place it correctly.', 'memory', ['N%L']],
+    ['KAVG high', 'VMkernel/vSCSI delay. Check queue depth, paths, vSCSI and host CPU pressure.', 'storage', ['KAVG/cmd', 'KAVG/rd', 'KAVG/wr']],
+    ['DAVG high', 'Device/array delay. Check the array, SAN fabric, HBA and path health.', 'storage', ['DAVG/cmd', 'DAVG/rd', 'DAVG/wr']],
+    ['GAVG high', 'Split it: GAVG = DAVG + KAVG. Fix the layer that dominates.', 'storage', ['GAVG/cmd', 'GAVG/rd', 'GAVG/wr']],
+    ['QUED / %USD high', 'Queue saturation. Check DQLEN/AQLEN and whether the backend can absorb more depth.', 'storage', ['QUED', '%USD']],
+    ['ABRTS/s, RESETS/s or CONS/s', 'Hard storage-path errors or reservation conflicts. Treat as an incident before tuning.', 'storage', ['ABRTS/s', 'RESETS/s', 'CONS/s']],
+    ['%DRPTX / %DRPRX', 'Network drops. Check the uplink, physical switch, teaming and traffic shaping.', 'network', ['%DRPTX', '%DRPRX']],
+  ].filter((row) => categories.has(row[2]) && (!doc || (row[4] ? hasAllMetric(doc, row[3]) : hasAnyMetric(doc, row[3]))));
 
   return `<div class="report-action-intro">
       <h3>Before you change anything</h3>
@@ -260,11 +264,11 @@ function reportActions(findings, categories = new Set(REPORT_CATEGORIES)) {
       </ol>
     </div>
     ${actions || '<div class="report-empty">No curated action items were produced. Review the raw metrics and the technical reference before making changes.</div>'}
-    <h3>Decision guide</h3>
+    ${decisionRows.length ? `<h3>Decision guide</h3>
     <table class="report-table report-decision">
       <thead><tr><th>Signal</th><th>First action</th></tr></thead>
       <tbody>${decisionRows.map(([signal, action]) => `<tr><td class="mono">${esc(signal)}</td><td>${esc(action)}</td></tr>`).join('')}</tbody>
-    </table>
+    </table>` : ''}
     <h3>Change control</h3>
     <ul class="report-list">
       <li>Save the current capture and the configuration or policy you are about to change.</li>
@@ -274,7 +278,7 @@ function reportActions(findings, categories = new Set(REPORT_CATEGORIES)) {
     </ul>`;
 }
 
-function reportTechnical(findings, categories = new Set(REPORT_CATEGORIES)) {
+function reportTechnical(findings, categories = new Set(REPORT_CATEGORIES), doc = null) {
   const relevant = new Set(findings.map((finding) => finding.metric));
   const categoryOrder = ['cpu', 'memory', 'storage', 'network'].filter((category) => categories.has(category));
   const relationships = Object.entries(TECHNICAL_RELATIONSHIPS)
@@ -283,6 +287,7 @@ function reportTechnical(findings, categories = new Set(REPORT_CATEGORIES)) {
     .join('');
   const categorySections = categoryOrder.map((category) => {
     const entries = technicalEntries(category)
+      .filter((entry) => !doc || hasMetric(doc, entry.metric))
       .sort((left, right) => Number(relevant.has(right.metric)) - Number(relevant.has(left.metric)) || left.metric.localeCompare(right.metric));
     if (!entries.length) return '';
     return `<h3>${esc(categoryLabel(category))}</h3>
@@ -300,8 +305,9 @@ function reportTechnical(findings, categories = new Set(REPORT_CATEGORIES)) {
         </article>`).join('')}
       </div>`;
   }).join('');
-  return `<p class="report-note">This reference covers the counters used by the rules; a capture may not contain every metric. Definitions follow the Broadcom/VMware counter semantics and the field guide's operational guidance.</p>
-    <div class="report-relations"><h3>Key relationships</h3>${relationships}</div>
+  if (!relationships && !categorySections) return '';
+  return `<p class="report-note">This reference covers the counters used by the rules that are present in this capture. Definitions follow the Broadcom/VMware counter semantics and the field guide's operational guidance.</p>
+    ${relationships ? `<div class="report-relations"><h3>Key relationships</h3>${relationships}</div>` : ''}
     ${categorySections}`;
 }
 
@@ -352,17 +358,21 @@ function reportHostStorageRows(doc, host) {
       row.series[series.metric] = series;
     }
   }
-  const rows = [...map.values()].filter((row) => (
-    ['GAVG/cmd', 'DAVG/cmd', 'KAVG/cmd', 'QAVG/cmd', 'CMDS/s'].some((metric) => row.series[metric])
-  ));
-  return rows.sort((left, right) => (
-    (Number(right.series['GAVG/cmd']?.stats?.p95) || 0) - (Number(left.series['GAVG/cmd']?.stats?.p95) || 0) ||
-    (Number(right.series['CMDS/s']?.stats?.p95) || 0) - (Number(left.series['CMDS/s']?.stats?.p95) || 0)
-  ));
+  const rows = [...map.values()].filter((row) => Object.keys(row.series).length);
+  return rows.sort((left, right) => {
+    const leftLatency = ['GAVG/cmd', 'DAVG/cmd', 'KAVG/cmd', 'QAVG/cmd', 'LAT/rd', 'LAT/wr', 'VSCSI_LATENCY'].map((metric) => Number(left.series[metric]?.stats?.p95) || 0).find((value) => value) || 0;
+    const rightLatency = ['GAVG/cmd', 'DAVG/cmd', 'KAVG/cmd', 'QAVG/cmd', 'LAT/rd', 'LAT/wr', 'VSCSI_LATENCY'].map((metric) => Number(right.series[metric]?.stats?.p95) || 0).find((value) => value) || 0;
+    return (rightLatency - leftLatency) ||
+      ((Number(right.series['CMDS/s']?.stats?.p95) || 0) - (Number(left.series['CMDS/s']?.stats?.p95) || 0));
+  });
 }
 
 function hostStorageValue(row, metric, field = 'p95') {
   return row?.series?.[metric]?.stats?.[field] ?? null;
+}
+
+function reportMetricTitle(doc, series) {
+  return doc.metrics?.[series.metric]?.name || series.metricName || series.metric;
 }
 
 function reportHost(doc, host, categories) {
@@ -386,59 +396,64 @@ function reportHost(doc, host, categories) {
     reportHostPick(doc, host, '%DRPTX'),
     reportHostPick(doc, host, '%DRPRX'),
   ].filter(Boolean).sort((left, right) => (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0))[0] || null;
-  const freePct = free?.stats?.last && machine?.stats?.last ? (free.stats.last / machine.stats.last) * 100 : null;
-  const rows = [
-    ['Physical CPU total P95', cpuTotal ? formatMetric(cpuTotal.stats?.p95, '%') : '—', cpuTotal?.status || 'neutral', 'cpu'],
-    ['Busiest physical core P95', cpuCore ? formatMetric(cpuCore.stats?.p95, '%') : '—', cpuCore?.status || 'neutral', 'cpu'],
-    ['CPU load 1m P95', formatMetric(load?.stats?.p95, ''), load?.status || 'neutral', 'cpu'],
-    ['Free memory last', free ? `${formatMetric(free.stats?.last, 'MB')}${freePct !== null ? ` (${formatNumber(freePct, 1)}% of machine)` : ''}` : '—', free?.status || 'neutral', 'memory'],
-    ['Memory overcommit P95', formatMetric(overcommit?.stats?.p95, ''), overcommit?.status || 'neutral', 'memory'],
-    ['Host balloon P95', formatMetric(balloon?.stats?.p95, 'MB'), balloon?.status || 'neutral', 'memory'],
-    ['Host swap used P95', formatMetric(swap?.stats?.p95, 'MB'), swap?.status || 'neutral', 'memory'],
-    ['Host swap I/O P95', `${formatMetric(swapIn?.stats?.p95, 'MB/s')} read / ${formatMetric(swapOut?.stats?.p95, 'MB/s')} write`, worstStatus([swapIn?.status, swapOut?.status].filter(Boolean)), 'memory'],
-    ['Host storage GAVG P95', formatMetric(gavg?.stats?.p95, 'ms'), gavg?.status || 'neutral', 'storage'],
-    ['Host storage QUED P95', formatMetric(qued?.stats?.p95, ''), qued?.status || 'neutral', 'storage'],
-    ['Host network drops P95', drops ? formatMetric(drops.stats?.p95, '%') : '—', drops?.status || 'neutral', 'network'],
-  ];
+  const powerNow = reportHostPick(doc, host, 'POWER_NOW');
+  const powerCap = reportHostPick(doc, host, 'POWER_CAP');
+  const freePct = free?.stats?.last !== null && free?.stats?.last !== undefined && machine?.stats?.last
+    ? (free.stats.last / machine.stats.last) * 100
+    : null;
+  const rows = [];
+  if (cpuTotal) rows.push(['Physical CPU total P95', formatMetric(cpuTotal.stats?.p95, '%'), cpuTotal.status, 'cpu']);
+  if (cpuCore) rows.push(['Busiest physical core P95', formatMetric(cpuCore.stats?.p95, '%'), cpuCore.status, 'cpu']);
+  if (load) rows.push(['CPU load 1m P95', formatMetric(load.stats?.p95, ''), load.status, 'cpu']);
+  if (free) rows.push(['Free memory last', `${formatMetric(free.stats?.last, 'MB')}${freePct !== null ? ` (${formatNumber(freePct, 1)}% of machine)` : ''}`, free.status, 'memory']);
+  if (overcommit) rows.push(['Memory overcommit P95', formatMetric(overcommit.stats?.p95, ''), overcommit.status, 'memory']);
+  if (balloon) rows.push(['Host balloon P95', formatMetric(balloon.stats?.p95, 'MB'), balloon.status, 'memory']);
+  if (swap) rows.push(['Host swap used P95', formatMetric(swap.stats?.p95, 'MB'), swap.status, 'memory']);
+  if (swapIn || swapOut) rows.push(['Host swap I/O P95', `${formatMetric(swapIn?.stats?.p95, 'MB/s')} read / ${formatMetric(swapOut?.stats?.p95, 'MB/s')} write`, worstStatus([swapIn?.status, swapOut?.status].filter(Boolean)), 'memory']);
+  if (gavg) rows.push(['Host storage GAVG P95', formatMetric(gavg.stats?.p95, 'ms'), gavg.status, 'storage']);
+  if (qued) rows.push(['Host storage QUED P95', formatMetric(qued.stats?.p95, ''), qued.status, 'storage']);
+  if (drops) rows.push(['Host network drops P95', formatMetric(drops.stats?.p95, '%'), drops.status, 'network']);
+  if (powerNow) rows.push(['Host power usage P95', formatMetric(powerNow.stats?.p95, 'W'), powerNow.status, 'power']);
+  if (powerCap) rows.push(['Host power cap', formatMetric(powerCap.stats?.last, 'W'), powerCap.status, 'power']);
   const visibleRows = rows.filter((row) => categories.has(row[3]));
   const storageRows = categories.has('storage') ? reportHostStorageRows(doc, host) : [];
   const hostTable = `<table class="report-table report-host-table">
     <thead><tr><th>Host signal</th><th class="num">Value</th><th>Status</th></tr></thead>
     <tbody>${visibleRows.map(([label, value, status]) => `<tr><td>${esc(label)}</td><td class="num">${esc(value)}</td><td>${badgeFor(status)}</td></tr>`).join('') || '<tr><td colspan="3">No host signals in the selected categories.</td></tr>'}</tbody>
   </table>`;
-  const storageCards = storageRows.length ? `<h3>Host disk adapters and devices</h3>
-    <p class="report-note">All host-scope storage entities in the capture, sorted by GAVG P95. Latency and queue values are P95; abort/reset values are capture maxima. <code>—</code> means the counter was not captured.</p>
+  const maxMetrics = new Set(['ABRTS/s', 'RESETS/s', 'CONS/s', 'ATSF', 'DELETE_F', 'ATS', 'ATS_FAIL_MS', 'CLONE_F', 'LCLONE_F', 'EXTSTATS_F', 'RESSPACE_F', 'ZERO_F']);
+  const storageCards = storageRows.length ? `<h3>Host storage entities</h3>
+    <p class="report-note">Every host-scope storage entity in the capture, sorted by the highest available latency. The card lists every metric captured for that entity; counters absent from the capture are omitted. Latency and queue values are P95; hard error counters use the capture maximum.</p>
     <div class="report-card-grid">
-      ${storageRows.map((row) => reportEntityCard({
-        title: row.instance || row.group,
-        subtitle: row.group,
-        status: worstStatus(Object.values(row.series).map((series) => series.status)),
-        metrics: [
-          ['IOPS', formatMetric(hostStorageValue(row, 'CMDS/s'), '/s')],
-          ['MB Read/s', formatMetric(hostStorageValue(row, 'MBREAD/s'), 'MB/s')],
-          ['MB Write/s', formatMetric(hostStorageValue(row, 'MBWRTN/s'), 'MB/s')],
-          ['GAVG', formatMetric(hostStorageValue(row, 'GAVG/cmd'), 'ms')],
-          ['DAVG', formatMetric(hostStorageValue(row, 'DAVG/cmd'), 'ms')],
-          ['KAVG', formatMetric(hostStorageValue(row, 'KAVG/cmd'), 'ms')],
-          ['QAVG', formatMetric(hostStorageValue(row, 'QAVG/cmd'), 'ms')],
-          ['Read lat', formatMetric(hostStorageValue(row, 'LAT/rd'), 'ms')],
-          ['Write lat', formatMetric(hostStorageValue(row, 'LAT/wr'), 'ms')],
-          ['QUED', formatMetric(hostStorageValue(row, 'QUED'), '')],
-          ['ACTV', formatMetric(hostStorageValue(row, 'ACTV'), '')],
-          ['Aborts max', formatMetric(hostStorageValue(row, 'ABRTS/s', 'max'), '/s')],
-          ['Resets max', formatMetric(hostStorageValue(row, 'RESETS/s', 'max'), '/s')],
-        ],
-      })).join('')}
+      ${storageRows.map((row) => {
+        const metrics = Object.keys(row.series)
+          .sort((left, right) => {
+            const leftName = reportMetricTitle(doc, row.series[left]);
+            const rightName = reportMetricTitle(doc, row.series[right]);
+            return leftName.localeCompare(rightName) || left.localeCompare(right);
+          })
+          .map((metric) => {
+            const series = row.series[metric];
+            const field = maxMetrics.has(metric) ? 'max' : 'p95';
+            return [reportMetricTitle(doc, series), formatMetric(hostStorageValue(row, metric, field), series.unit)];
+          });
+        return reportEntityCard({
+          title: row.instance || row.group,
+          subtitle: row.group,
+          status: worstStatus(Object.values(row.series).map((series) => series.status)),
+          metrics,
+        });
+      }).join('')}
     </div>` : '';
   const storageNote = categories.has('storage')
-    ? ' Latency is split into GAVG, DAVG and KAVG; the host storage cards below include every host-scope adapter/device captured for this host.'
+    ? ' Host storage cards list only the counters that were present in this capture.'
     : '';
   return `<p class="report-note">Scope: <strong>${esc(host || 'capture host')}</strong>. Host counters are P95 over the capture window unless marked “last”.${storageNote}</p>
     ${hostTable}
     ${storageCards}`;
 }
 
-export const REPORT_CATEGORIES = ['cpu', 'memory', 'storage', 'network', 'power', 'other'];
+export const REPORT_CATEGORIES = ['cpu', 'memory', 'storage', 'network', 'power', 'interrupt', 'other'];
 
 export function reportCategorySet(scope = {}) {
   const selected = Array.isArray(scope.categories) && scope.categories.length
@@ -493,41 +508,25 @@ function reportVms(doc, host = null, selectedVms = [], categories = new Set(REPO
   if (!names.length) {
     return '<div class="report-empty">No VM groups were detected for the selected host and scope. ESXi system worlds are excluded from this table.</div>';
   }
-  const showCpu = categories.has('cpu');
-  const showMemory = categories.has('memory');
-  const showStorage = categories.has('storage');
-  const headers = [
-    '<th>Virtual machine</th>',
-    ...(showCpu ? ['<th class="num">vCPU</th>', '<th class="num">CPU P95</th>', '<th class="num">%RDY P95</th>', '<th class="num">%MLMTD P95</th>', '<th class="num">%CSTP P95</th>'] : []),
-    ...(showMemory ? ['<th class="num">Memory</th>', '<th class="num">Balloon P95</th>', '<th class="num">Swap P95</th>'] : []),
-    ...(showStorage ? ['<th class="num">GAVG P95</th>'] : []),
-    '<th>Status</th>',
-  ];
+  const hasVcpuGroup = hasVcpuSeries(doc);
+  const columns = [{ header: 'Virtual machine', cell: (vm) => `<td><strong>${esc(vm.name)}</strong></td>` }];
+  if (categories.has('cpu') && hasVcpuGroup) columns.push({ header: 'vCPU', cell: (vm) => `<td class="num">${vm.vcpus ?? '—'}</td>` });
+  if (categories.has('cpu') && hasMetric(doc, '%USED')) columns.push({ header: 'CPU P95', cell: (vm) => `<td class="num">${formatMetric(vm.cpuUsed?.stats?.p95, '%')}</td>` });
+  if (categories.has('cpu') && hasMetric(doc, '%RDY')) columns.push({ header: '%RDY P95', cell: (vm) => `<td class="num">${formatMetric(vm.ready?.stats?.p95, '%')}</td>` });
+  if (categories.has('cpu') && hasMetric(doc, '%MLMTD')) columns.push({ header: '%MLMTD P95', cell: (vm) => `<td class="num">${formatMetric(vm.mlmtd?.stats?.p95, '%')}</td>` });
+  if (categories.has('cpu') && hasMetric(doc, '%CSTP')) columns.push({ header: '%CSTP P95', cell: (vm) => `<td class="num">${formatMetric(vm.cstop?.stats?.p95, '%')}</td>` });
+  if (categories.has('memory') && hasMetric(doc, 'MEMSZ')) columns.push({ header: 'Memory', cell: (vm) => `<td class="num">${vm.configuredMemory !== null ? formatMetric(vm.configuredMemory, 'MB') : '—'}</td>` });
+  if (categories.has('memory') && hasMetric(doc, 'MCTLSZ')) columns.push({ header: 'Balloon P95', cell: (vm) => `<td class="num">${formatMetric(vm.balloon?.stats?.p95, 'MB')}</td>` });
+  if (categories.has('memory') && hasMetric(doc, 'SWCUR')) columns.push({ header: 'Swap P95', cell: (vm) => `<td class="num">${formatMetric(vm.swap?.stats?.p95, 'MB')}</td>` });
+  if (categories.has('storage') && ['GAVG/cmd', 'LAT/rd', 'LAT/wr', 'VSCSI_LATENCY'].some((metric) => hasMetric(doc, metric))) columns.push({ header: 'Storage latency P95', cell: (vm) => `<td class="num">${formatMetric(vm.disk?.stats?.p95, vm.disk?.unit || 'ms')}</td>` });
+  columns.push({ header: 'Status', cell: (vm) => `<td>${badgeFor(worstStatus([vm.status, ...vm.findings.map((finding) => finding.severity)]))}</td>` });
   const rows = names.map((name) => {
     const vm = vmSummary(doc, name, host, categories);
-    const status = worstStatus([vm.status, ...vm.findings.map((finding) => finding.severity)]);
-    const cells = [
-      `<td><strong>${esc(vm.name)}</strong></td>`,
-      ...(showCpu ? [
-        `<td class="num">${vm.vcpus ?? '—'}</td>`,
-        `<td class="num">${formatMetric(vm.cpuUsed?.stats?.p95, '%')}</td>`,
-        `<td class="num">${formatMetric(vm.ready?.stats?.p95, '%')}</td>`,
-        `<td class="num">${formatMetric(vm.mlmtd?.stats?.p95, '%')}</td>`,
-        `<td class="num">${formatMetric(vm.cstop?.stats?.p95, '%')}</td>`,
-      ] : []),
-      ...(showMemory ? [
-        `<td class="num">${vm.configuredMemory !== null ? formatMetric(vm.configuredMemory, 'MB') : '—'}</td>`,
-        `<td class="num">${formatMetric(vm.balloon?.stats?.p95, 'MB')}</td>`,
-        `<td class="num">${formatMetric(vm.swap?.stats?.p95, 'MB')}</td>`,
-      ] : []),
-      ...(showStorage ? [`<td class="num">${formatMetric(vm.disk?.stats?.p95, 'ms')}</td>`] : []),
-      `<td>${badgeFor(status)}</td>`,
-    ];
-    return `<tr>${cells.join('')}</tr>`;
+    return `<tr>${columns.map((column) => column.cell(vm)).join('')}</tr>`;
   }).join('');
-  return `<p class="report-note">One row per VM. ESXi system worlds such as <code>system1</code>, <code>hostd.20994601</code> and <code>python.20979311</code> are excluded from this table and from VM-scoped findings.</p>
+  return `<p class="report-note">One row per VM. Columns are shown only when the metric and category exist in this capture. ESXi system worlds such as <code>system1</code>, <code>hostd.20994601</code> and <code>python.20979311</code> are excluded from this table and from VM-scoped findings.</p>
     <div class="report-table-wrap"><table class="report-table">
-      <thead><tr>${headers.join('')}</tr></thead>
+      <thead><tr>${columns.map((column) => `<th${['Virtual machine', 'Status'].includes(column.header) ? '' : ' class="num"'}>${esc(column.header)}</th>`).join('')}</tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
 }
@@ -572,47 +571,55 @@ function reportVmStorage(doc, host = null, selectedVms = [], categories = new Se
   const names = reportScopedVmNames(doc, host, selectedVms);
   const summaryRows = [];
   const diskCards = [];
+  const vmDiskMetrics = new Set((doc.series || [])
+    .filter((series) => series.scope === 'vm' && String(series.group || '').toLowerCase().startsWith('virtual disk'))
+    .map((series) => series.metric));
+  const summaryColumns = [
+    ['CMDS/s', 'IOPS'],
+    ['MBREAD/s', 'MB Read/s'],
+    ['MBWRTN/s', 'MB Write/s'],
+    ['GAVG/cmd', 'GAVG'],
+    ['DAVG/cmd', 'DAVG'],
+    ['KAVG/cmd', 'KAVG'],
+    ['QAVG/cmd', 'QAVG'],
+    ['LAT/rd', 'Read latency'],
+    ['LAT/wr', 'Write latency'],
+    ['VSCSI_LATENCY', 'Virtual disk latency'],
+    ['QUED', 'QUED'],
+    ['ACTV', 'ACTV'],
+  ].filter(([metric]) => vmDiskMetrics.has(metric));
+  const maxMetrics = new Set(['ABRTS/s', 'RESETS/s', 'CONS/s', 'ATSF', 'DELETE_F', 'ATS', 'CLONE_F', 'LCLONE_F', 'EXTSTATS_F', 'RESSPACE_F', 'ZERO_F']);
   for (const name of names) {
     const vm = vmSummary(doc, name, host, categories);
     const rows = diskRowsForVm(vm);
     if (!rows.length) continue;
-    const worst = [...rows].sort((left, right) => (
-      (Number(diskValue(right, 'GAVG/cmd')) || 0) - (Number(diskValue(left, 'GAVG/cmd')) || 0) ||
-      (Number(diskValue(right, 'CMDS/s')) || 0) - (Number(diskValue(left, 'CMDS/s')) || 0)
-    ))[0];
+    const worst = [...rows].sort((left, right) => {
+      const leftLatency = ['GAVG/cmd', 'DAVG/cmd', 'KAVG/cmd', 'QAVG/cmd', 'LAT/rd', 'LAT/wr', 'VSCSI_LATENCY'].map((metric) => Number(diskValue(left, metric)) || 0).find((value) => value) || 0;
+      const rightLatency = ['GAVG/cmd', 'DAVG/cmd', 'KAVG/cmd', 'QAVG/cmd', 'LAT/rd', 'LAT/wr', 'VSCSI_LATENCY'].map((metric) => Number(diskValue(right, metric)) || 0).find((value) => value) || 0;
+      return (rightLatency - leftLatency) || ((Number(diskValue(right, 'CMDS/s')) || 0) - (Number(diskValue(left, 'CMDS/s')) || 0));
+    })[0];
     summaryRows.push(`<tr>
       <td><strong>${esc(name)}</strong></td>
       <td class="num">${rows.length}</td>
-      <td class="num">${formatMetric(diskValue(worst, 'CMDS/s'), '/s')}</td>
-      <td class="num">${formatMetric(diskValue(worst, 'MBREAD/s'), 'MB/s')}</td>
-      <td class="num">${formatMetric(diskValue(worst, 'MBWRTN/s'), 'MB/s')}</td>
-      <td class="num">${formatMetric(diskValue(worst, 'GAVG/cmd'), 'ms')}</td>
-      <td class="num">${formatMetric(diskValue(worst, 'DAVG/cmd'), 'ms')}</td>
-      <td class="num">${formatMetric(diskValue(worst, 'KAVG/cmd'), 'ms')}</td>
+      ${summaryColumns.map(([metric]) => {
+        const series = worst.series[metric];
+        return `<td class="num">${formatMetric(diskValue(worst, metric), series?.unit || '')}</td>`;
+      }).join('')}
       <td>${badgeFor(diskStatus(worst))}</td>
     </tr>`);
     for (const row of rows) {
+      const metrics = Object.keys(row.series)
+        .sort((left, right) => reportMetricTitle(doc, row.series[left]).localeCompare(reportMetricTitle(doc, row.series[right])) || left.localeCompare(right))
+        .map((metric) => {
+          const series = row.series[metric];
+          const field = maxMetrics.has(metric) ? 'max' : 'p95';
+          return [reportMetricTitle(doc, series), formatMetric(diskValue(row, metric, field), series.unit)];
+        });
       diskCards.push(reportEntityCard({
         title: `${name} · ${diskLabel(row.key)}`,
         subtitle: 'Virtual disk',
         status: diskStatus(row),
-        metrics: [
-          ['IOPS', formatMetric(diskValue(row, 'CMDS/s'), '/s')],
-          ['Read/s', formatMetric(diskValue(row, 'READS/s'), '/s')],
-          ['Write/s', formatMetric(diskValue(row, 'WRITES/s'), '/s')],
-          ['MB Read/s', formatMetric(diskValue(row, 'MBREAD/s'), 'MB/s')],
-          ['MB Write/s', formatMetric(diskValue(row, 'MBWRTN/s'), 'MB/s')],
-          ['GAVG', formatMetric(diskValue(row, 'GAVG/cmd'), 'ms')],
-          ['DAVG', formatMetric(diskValue(row, 'DAVG/cmd'), 'ms')],
-          ['KAVG', formatMetric(diskValue(row, 'KAVG/cmd'), 'ms')],
-          ['QAVG', formatMetric(diskValue(row, 'QAVG/cmd'), 'ms')],
-          ['Read lat', formatMetric(diskValue(row, 'LAT/rd'), 'ms')],
-          ['Write lat', formatMetric(diskValue(row, 'LAT/wr'), 'ms')],
-          ['QUED', formatMetric(diskValue(row, 'QUED'), '')],
-          ['ACTV', formatMetric(diskValue(row, 'ACTV'), '')],
-          ['Aborts max', formatMetric(diskValue(row, 'ABRTS/s', 'max'), '/s')],
-          ['Resets max', formatMetric(diskValue(row, 'RESETS/s', 'max'), '/s')],
-        ],
+        metrics,
       }));
     }
   }
@@ -620,10 +627,10 @@ function reportVmStorage(doc, host = null, selectedVms = [], categories = new Se
     return '<div class="report-empty">No Virtual Disk counters were captured for the detected VMs.</div>';
   }
   return `<h3>VM storage detail</h3>
-    <p class="report-note">P95 over the capture window. The quick-scan table has one row per VM; the cards below have one card per virtual disk, so a VM with multiple disks appears once per disk. That is disk-level detail, not a duplicate VM record. <code>—</code> means the counter was not captured.</p>
+    <p class="report-note">P95 over the capture window unless the counter is a hard error field, which uses the capture maximum. The quick-scan table has one row per VM; the cards below have one card per virtual disk. A VM with multiple disks appears once per disk — that is disk-level detail, not a duplicate VM record. Every captured metric is listed, and counters absent from the capture are omitted.</p>
     <h4>Quick scan: worst virtual disk per VM</h4>
     <div class="report-table-wrap"><table class="report-table">
-      <thead><tr><th>Virtual machine</th><th class="num">vDisks</th><th class="num">IOPS</th><th class="num">MB Read/s</th><th class="num">MB Write/s</th><th class="num">GAVG</th><th class="num">DAVG</th><th class="num">KAVG</th><th>Status</th></tr></thead>
+      <thead><tr><th>Virtual machine</th><th class="num">vDisks</th>${summaryColumns.map(([, label]) => `<th class="num">${esc(label)}</th>`).join('')}<th>Status</th></tr></thead>
       <tbody>${summaryRows.join('')}</tbody>
     </table></div>
     <h4>Per-virtual-disk latency and I/O</h4>
@@ -636,41 +643,57 @@ function reportVmMemoryNetwork(doc, host = null, selectedVms = [], categories = 
   if (!showMemory && !showNetwork) return '';
   const names = reportScopedVmNames(doc, host, selectedVms);
   if (!names.length) return '<div class="report-empty">No VM groups were detected for the selected host and scope.</div>';
-  const cards = names.map((name) => {
+  const memoryFields = [
+    ['MEMSZ', 'Memory size', 'MB', 'configuredMemory'],
+    ['GRANT', 'Granted', 'MB', 'grantedMemory'],
+    ['MCTLSZ', 'Balloon', 'MB', 'balloon'],
+    ['SWCUR', 'Swap', 'MB', 'swap'],
+    ['SWR/s', 'Swap in', 'MB/s', 'swapIn'],
+    ['SWW/s', 'Swap out', 'MB/s', 'swapOut'],
+    ['%SWPWT', 'Swap wait', '%', 'swapWait'],
+    ['N%L', 'N%L P05', '%', 'numa'],
+  ].filter(([metric]) => hasMetric(doc, metric));
+  const networkFields = [
+    ['%DRPTX', 'TX drop', '%', 'txDrop'],
+    ['%DRPRX', 'RX drop', '%', 'rxDrop'],
+    ['MbTX/s', 'TX Mbps', 'Mbps', 'mbTx'],
+    ['MbRX/s', 'RX Mbps', 'Mbps', 'mbRx'],
+  ].filter(([metric]) => hasMetric(doc, metric));
+  const cards = [];
+  for (const name of names) {
     const vm = vmSummary(doc, name, host, categories);
     const metrics = [];
     if (showMemory) {
-      metrics.push(
-        ['Memory size', formatMetric(vm.configuredMemory, 'MB')],
-        ['Granted', formatMetric(vm.grantedMemory, 'MB')],
-        ['Balloon', formatMetric(vm.balloon?.stats?.p95, 'MB')],
-        ['Swap', formatMetric(vm.swap?.stats?.p95, 'MB')],
-        ['Swap in', formatMetric(vm.swapIn?.stats?.p95, 'MB/s')],
-        ['Swap out', formatMetric(vm.swapOut?.stats?.p95, 'MB/s')],
-        ['Swap wait', formatMetric(vm.swapWait?.stats?.p95, '%')],
-        ['N%L P05', formatMetric(vm.numa?.stats?.p05, '%')],
-      );
+      for (const [metric, label, unit, field] of memoryFields) {
+        const series = vm[field];
+        let value = metric === 'N%L' ? series?.stats?.p05 : series?.stats?.p95;
+        if (metric === 'MEMSZ') value = vm.configuredMemory;
+        if (metric === 'GRANT') value = vm.grantedMemory;
+        metrics.push([label, formatMetric(value, unit)]);
+      }
     }
     if (showNetwork) {
-      metrics.push(
-        ['TX drop', formatMetric(vm.txDrop?.stats?.p95, '%')],
-        ['RX drop', formatMetric(vm.rxDrop?.stats?.p95, '%')],
-        ['TX Mbps', formatMetric(vm.mbTx?.stats?.p95, 'Mbps')],
-        ['RX Mbps', formatMetric(vm.mbRx?.stats?.p95, 'Mbps')],
-      );
+      for (const [metric, label, unit, field] of networkFields) {
+        metrics.push([label, formatMetric(vm[field]?.stats?.p95, unit)]);
+      }
     }
-    return reportEntityCard({
+    if (!metrics.length) continue;
+    const subtitleParts = [];
+    if (vm.vcpus !== null && vm.vcpus !== undefined) subtitleParts.push(`${vm.vcpus} vCPU`);
+    if (vm.configuredMemory !== null && vm.configuredMemory !== undefined) subtitleParts.push(`${formatMetric(vm.configuredMemory, 'MB')} configured`);
+    cards.push(reportEntityCard({
       title: name,
-      subtitle: `${vm.vcpus ?? '—'} vCPU · ${formatMetric(vm.configuredMemory, 'MB')} configured`,
+      subtitle: subtitleParts.join(' · '),
       status: vm.status,
       metrics,
-    });
-  }).join('');
+    }));
+  }
+  if (!cards.length) return '<div class="report-empty">No VM memory or network counters were captured for the selected VMs.</div>';
   const title = showMemory && showNetwork ? 'VM memory and network detail' : showMemory ? 'VM memory detail' : 'VM network detail';
   const note = showMemory
-    ? 'P95 for reclaim values; N%L shows P05 because lower locality is worse. Swap wait is the vCPU swap-wait percentage. — means the counter was not captured.'
-    : 'P95 for network values. — means the counter was not captured.';
-  return `<h3>${title}</h3><p class="report-note">${esc(note)}</p><div class="report-card-grid">${cards}</div>`;
+    ? 'P95 for reclaim values; N%L shows P05 because lower locality is worse. Swap wait is the vCPU swap-wait percentage. Only counters present in the capture are shown.'
+    : 'P95 for network values. Only counters present in the capture are shown.';
+  return `<h3>${title}</h3><p class="report-note">${esc(note)}</p><div class="report-card-grid">${cards.join('')}</div>`;
 }
 
 function reportMetricAppendix(doc, selectedCategories = new Set(REPORT_CATEGORIES)) {
@@ -730,7 +753,7 @@ function reportMetricAppendix(doc, selectedCategories = new Set(REPORT_CATEGORIE
           const name = definition.name || item.metricName || item.metric;
           return `<tr>
             <td>${esc(categoryLabel(item.category))}</td>
-            <td><strong>${esc(name)}</strong><span class="report-metric-id">${esc(item.metric)} · ${esc(item.group)}${item.instance ? ` · ${esc(item.instance)}` : ''}</span></td>
+            <td><strong>${esc(name)}</strong><span class="report-metric-id">${esc(item.metric)} · ${esc(item.group)}${item.instance ? ` · ${esc(item.instance)}` : ''}${item.counter ? ` · ${esc(item.counter)}` : ''}</span></td>
             <td class="num">${formatMetric(item.stats?.min, item.unit)}</td>
             <td class="num">${formatMetric(item.stats?.avg, item.unit)}</td>
             <td class="num">${formatMetric(item.stats?.p95, item.unit)}</td>
@@ -750,7 +773,7 @@ function reportMetricAppendix(doc, selectedCategories = new Set(REPORT_CATEGORIE
 function reportCategories(doc, selectedCategories = new Set(REPORT_CATEGORIES)) {
   const categories = doc.summary?.categories || {};
   const rows = REPORT_CATEGORIES
-    .filter((key) => selectedCategories.has(key) && categories[key])
+    .filter((key) => selectedCategories.has(key) && (categories[key]?.series || 0) > 0)
     .map((key) => {
       const item = categories[key];
       return `<tr>
@@ -861,6 +884,7 @@ export function reportBody(doc, scope = {}) {
         ? `${selectedHosts.length} selected hosts · capture report`
         : (selectedHosts[0] || meta.host || 'ESXi host');
   const generated = new Date().toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  const technical = reportTechnical(findings, categories, doc);
   const hostSections = detailHosts.map((host) => `<section class="report-section">
       <h2>Host snapshot${detailHosts.length > 1 ? ` · ${esc(host)}` : ''}</h2>
       ${reportHost(doc, host, categories)}
@@ -908,16 +932,16 @@ export function reportBody(doc, scope = {}) {
     ${hostSections}
     <section class="report-section">
       <h2>What to do next</h2>
-      ${reportActions(findings, categories)}
+      ${reportActions(findings, categories, doc)}
     </section>
     <section class="report-section">
       <h2>Findings</h2>
       ${reportFindings(findings)}
     </section>
-    <section class="report-section">
+    ${technical ? `<section class="report-section">
       <h2>Technical reference</h2>
-      ${reportTechnical(findings, categories)}
-    </section>
+      ${technical}
+    </section>` : ''}
     ${vmSections}
     <section class="report-section">
       <h2>Categories</h2>

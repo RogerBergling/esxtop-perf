@@ -39,6 +39,12 @@ _SYSTEM_GROUP_NAMES = {
     "driver",
     "console",
     "management",
+    "drivers",
+    "ft",
+    "net",
+    "userworld",
+    "virtscsi",
+    "vmotion",
     "vsan",
     "vsphere",
     "vpx",
@@ -227,16 +233,25 @@ def _parse_vcpu_instance(instance: str) -> tuple[str, str]:
     """Return (VM name, world label) from a Vcpu instance string.
 
     Typical forms:
+        10882:DNS-MAIL:2100233:vmx-vcpu-0:DNS-MAIL
+        1:system:2097859:tq:incompatTQ
         123:VM Name:456:vmx-vcpu-0
         123:VM Name:456
+
+    The second field is the group name. The fourth and later fields are the
+    world label; some ESXi releases append the group name again at the end of
+    helper worlds. World labels themselves can contain colons, so do not use
+    ``parts[1:-2]``.
     """
 
     parts = instance.split(":")
     if len(parts) < 2:
-        return instance, ""
-    vm_name = ":".join(parts[1:-2]) if len(parts) >= 4 else parts[1]
-    world = parts[-1] if len(parts) >= 3 else ""
-    return vm_name.strip(), world.strip()
+        return instance.strip(), ""
+    vm_name = parts[1].strip()
+    world = ":".join(parts[3:]).strip() if len(parts) >= 4 else ""
+    if vm_name and world.endswith(f":{vm_name}"):
+        world = world[: -(len(vm_name) + 1)]
+    return vm_name, world.strip()
 
 
 def _parse_virtual_disk_instance(instance: str) -> str:

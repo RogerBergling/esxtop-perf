@@ -25,13 +25,13 @@ Both screenshots use the bundled synthetic demo capture. The demo contains inten
 
 - **Imports real esxtop output** — PDH-CSV 4.0, gzip, case-insensitive counter names, human-readable labels (`% Ready`) and short abbreviations (`%RDY`).
 - **Drills into every metric** — search all columns, chart any series, inspect all samples, and export raw series to CSV.
-- **CPU, memory, storage, network, VM** — host cores, Group Cpu, Vcpu, Group Memory, Virtual Disk, Disk Device/Adapter, Network Port, power and vSAN.
+- **All esxtop panels** — host cores, Group Cpu, Vcpu, Group Memory, Virtual Disk, Disk Device/Adapter/Path/Partition/SCSI Device, Network Port, Power, Interrupt Cookie, NUMA and vSAN-enabled captures. Every captured field is catalogued or preserved as a raw field.
 - **Green / yellow / red** — a transparent rule engine with sustained percentile checks, not a single-spike alarm.
 - **Evidence and references** — every finding shows the observed value, guardrail, why it matters, a next action and Broadcom/Yellow Bricks sources.
-- **HTML and PDF reports** — a standalone HTML report and browser print-to-PDF with the executive summary, a prioritized “What to do next” action plan, every finding, and a technical reference covering KAVG, DAVG, GAVG, %RDY, %MLMTD, %CSTP and the other counters behind the findings. Choose multiple hosts and VMs, filter six metric categories, and export HTML, PDF or a category-filtered metrics CSV.
+- **HTML and PDF reports** — a standalone HTML report and browser print-to-PDF with the executive summary, a prioritized “What to do next” action plan, every finding, and a technical reference covering KAVG, DAVG, GAVG, %RDY, %MLMTD, %CSTP and the other counters behind the findings. Choose multiple hosts and VMs, filter seven metric categories, and export HTML, PDF or a category-filtered metrics CSV.
 - **Written field guide** — the capture command explained token by token, CSV anatomy, counter semantics, playbooks and caveats.
 - **Focused capture manual** — a step-by-step `-c` workflow with a command builder, verification recipe and the traps that make a configuration silently ineffective.
-- **Local-only processing** — captures are parsed into a short-lived local session. No analytics, no third-party upload; the session is removed after 30 minutes or on restart.
+- **Local-only processing** — captures are parsed into a short-lived local session. No analytics, no third-party upload; the session is removed after 30 minutes or on restart. An optional upload password can be set before exposing the app beyond localhost.
 - **Docker + GHCR + Watchtower** — multi-arch image publishing and automatic updates every 5 minutes, scoped to this container.
 
 ## Quick start
@@ -43,7 +43,7 @@ curl -O https://raw.githubusercontent.com/RogerBergling/esxtop-perf/main/compose
 docker compose up -d
 ```
 
-Open **http://localhost:8004** and drop in a capture, or click **Load demo capture**.
+Open **http://localhost:8004** and drop in a capture, or click **Load demo capture**. The Compose port is bound to **127.0.0.1** by default. To expose it on the LAN, set `ESXTOP_UPLOAD_PASSWORD` in `.env`, change the Compose port mapping to `8004:8080`, and use HTTPS/reverse-proxy authentication; see [Upload password and public exposure](#upload-password-and-public-exposure).
 
 If GHCR returns an authentication error, the package is still private. Authenticate with a token that has `read:packages`:
 
@@ -89,17 +89,62 @@ On Windows, double-click `start.bat`, or run `py -3 start.py`.
 
 The launcher serves the app on the first free port in **8080–8099** unless `--port` is supplied. Open the site through the server, not as a `file://` URL.
 
+### Upload password and public exposure
+
+The upload endpoint is **not remote code execution**: uploaded bytes are written to a temporary file, parsed as CSV or gzip data, and never executed, imported or passed to a shell. The parser has no `eval`, `exec`, `pickle`, template execution or shell command based on file content.
+
+An unauthenticated public deployment is still a real availability and data-handling risk:
+
+- a large all-fields capture can consume several seconds of CPU and well over 1 GB of memory;
+- repeated or concurrent uploads can exhaust a small container;
+- the upload endpoint has no built-in rate limit;
+- captures can contain sensitive host, VM, datastore and device names;
+- `/api/series` uses a random session ID as a bearer capability; the demo endpoint is intentionally public.
+
+For local or trusted-LAN use, no password is needed. Before exposing the app to the internet, generate a strong random value and set it in the server environment:
+
+```bash
+export ESXTOP_UPLOAD_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+python3 start.py --host 0.0.0.0 --port 8080 --no-browser
+```
+
+Or put it in `.env` next to `compose.yaml`:
+
+```text
+ESXTOP_UPLOAD_PASSWORD=use-a-long-random-value-here
+```
+
+Then:
+
+```bash
+docker compose up -d --force-recreate
+```
+
+When the variable is set:
+
+- `POST /api/analyze` returns **401** unless the request carries `X-ESXTOP-Upload-Password`;
+- the import page shows an upload-password field;
+- the value is kept in `sessionStorage` for that tab, not `localStorage`;
+- the server compares it with `hmac.compare_digest` and never includes it in `/api/health` or server-rendered HTML (the browser fills the password field from `sessionStorage`);
+- an incorrect password produces the same generic error as a missing password.
+
+**Do not hardcode a password in the frontend.** A password in HTML or JavaScript is visible to every visitor and is not a security control. The password travels in an HTTP header, so use HTTPS whenever the app is reachable outside localhost; without TLS the password can be observed on the network. The environment-variable gate is deliberately server-side. For a public or multi-user deployment, put the whole app behind HTTPS and reverse-proxy authentication (Basic Auth, OIDC or an identity-aware proxy), not just the upload route. Configure the proxy to redact `X-ESXTOP-Upload-Password` from access logs and to enforce body-size/read timeouts. Keep the container read-only, keep the `/tmp` tmpfs and memory limits, lower `ESXTOP_MAX_UPLOAD_MB`, and add per-IP rate limiting at the proxy.
+
+The upload password protects **file upload**, not the entire application. The bundled demo, static assets, health endpoint and session-based chart API remain reachable. If that is not acceptable, use reverse-proxy authentication for the whole site.
+
 ### Build the image
 
 ```bash
 docker build \
-  --build-arg APP_VERSION=1.7.0 \
+  --build-arg APP_VERSION=1.8.0 \
   --build-arg IMAGE_TAG=local \
   --build-arg GIT_SHA="$(git rev-parse --short HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   -t esxtop-lens .
 docker run --rm -p 8080:8080 --read-only --tmpfs /tmp:rw,noexec,nosuid,size=2g -m 2g esxtop-lens
 ```
+
+When the container is reachable beyond localhost, add `-e ESXTOP_UPLOAD_PASSWORD='...'` and use HTTPS at the proxy.
 
 ## Build system and dependencies
 
@@ -244,13 +289,30 @@ The **Report** page is a report builder, not an auto-generated document:
 - **Hosts only** — selected host snapshots, host disk cards and host-level detail; no VM detail sections.
 - **Selected VMs only** — only the selected VMs, which may come from any host; host snapshots are omitted.
 
-Six metric-category checkboxes — **CPU**, **Memory**, **Storage**, **Network**, **Power** and **Other** — filter the report capture-wide: summary counts and signal score, findings, the “What to do next” actions, technical reference, categories, VM detail columns and cards, host detail rows and disk cards, the complete appendix, and the filtered metrics CSV. Host/VM selection controls only the detailed host and VM sections. In the appendix every included series is grouped by entity, so each VM appears once as a heading with all of its captured metrics underneath; no series in the selected categories is dropped.
+Seven possible metric-category checkboxes — **CPU**, **Memory**, **Storage**, **Network**, **Power**, **Interrupts** and **Other**; only categories present in the capture are listed. They filter the report capture-wide: summary counts and signal score, findings, the “What to do next” actions, technical reference, categories, VM detail columns and cards, host detail rows and disk cards, the complete appendix, and the filtered metrics CSV. Host/VM selection controls only the detailed host and VM sections. In the appendix every included series is grouped by entity, so each VM appears once as a heading with all of its captured metrics underneath; no series in the selected categories is dropped.
 
-Multi-host captures are detected from the host names in the PDH-CSV counter paths. Press **Generate report** after choosing the scope; HTML, PDF and CSV export buttons remain disabled until the visible report has been generated. The scoped detail includes host snapshots, host disk cards, VM summaries, per-virtual-disk storage latency/I/O, and VM memory/network cards. HTML and PDF use the chosen host/VM scope and categories; the filtered metrics CSV uses the selected categories.
+Multi-host captures are detected from the host names in the PDH-CSV counter paths. Press **Generate report** after choosing the scope; HTML, PDF and CSV export buttons remain disabled until the visible report has been generated. The scoped detail includes host snapshots, host storage cards, VM summaries, per-virtual-disk storage latency/I/O, and VM memory/network cards. Only metrics present in the capture are rendered; a disabled field is omitted rather than shown as a dash. HTML and PDF use the chosen host/VM scope and categories; the filtered metrics CSV uses the selected categories.
 
 The app includes a step-by-step **Capture** page and command builder at `#/capture`. A detailed version is also in the [field guide](public/docs/esxtop-field-guide.md#focused-capture-with--c).
 
 Read the [field guide](public/docs/esxtop-field-guide.md) for the world/group model, every important CPU/memory/storage/network counter, the GAVG = DAVG + KAVG rule, practical threshold rationale and troubleshooting playbooks.
+
+### Field coverage and presence-aware views
+
+The parser does not require a fixed field list. Every non-empty PDH-CSV column becomes a series, and the catalogue supplies a stable ID, name, unit and category where the field is known. Unknown vendor fields are preserved with a `RAW:<family>:<counter>` ID instead of being dropped.
+
+A reference all-fields capture (`esxtop -b -a`) was used to validate this release. It contained **145,663 metric columns**, **10 samples**, **17 VMs** and 223 distinct metric IDs across CPU, memory, storage, network, power and interrupt panels. All 223 resolved to catalogued definitions; none remained an unclassified raw field. On the validation host, the server parsed and analysed that capture in about **5.5 seconds**, the browser reached the overview in about **14.5 seconds**, and generating the complete all-category report took about **42 seconds** because it rendered all **145,663 appendix rows**. Category and host/VM scopes reduce that cost substantially. The audit also caught and fixed several real mapping problems:
+
+- CPU and memory `Alloc Min`/`Alloc Max`/`Alloc Shares` fields now resolve by panel instead of sharing one ambiguous ID.
+- `PShare Common MBytes` and `PShare Shared MBytes` are separate metrics; they are not merged.
+- `QAVG/rd` and `QAVG/wr` are catalogued rather than left as raw storage fields.
+- Virtual Disk `Average MilliSec/Read` and `Average MilliSec/Write` map to `LAT/rd` and `LAT/wr`; `Link Speed (Mb/s)` maps to `SPEED` with Mbps units.
+- Interrupt Cookie fields have a dedicated **Interrupts** category; the reference capture contains 77,018 interrupt series (per-cookie and per-CPU variants).
+- Newer VAAI/UNMAP fields (`ExtStats`, `ResSpace`, `LClone`, ATS/clone/zero latencies, unmap counters) are catalogued with their counter-name units. Where public documentation is ambiguous, the value is kept raw and the description says so rather than inventing a unit.
+
+**Presence rule:** a field is shown only if the uploaded capture contains that column. Zero is a valid value and is retained and displayed. A field that is absent from the capture is omitted from KPI cards, tables, cards, charts, category filters and report sections. A field that is present in the capture can still show `—` for a particular entity or sample when that entity did not emit a value; that is an entity-level absence, not a fabricated field. This is why a focused capture can look much smaller than an `-a` capture and why the report scope checkboxes only list categories that are actually present.
+
+**vSAN caveat:** the reference capture reports `VSAN\Enabled? = 0`, so vSAN-specific counters are not present. vSAN fields are emitted only when vSAN is enabled on the host and the vSAN panel is included. The app documents this in the capture observations and in the field guide; it does not fabricate vSAN metrics.
 
 ## Analysis model
 
@@ -286,22 +348,28 @@ The current all-metric defaults admit captures up to 200,000 metric columns:
 | Samples | 50,000 | `ESXTOP_MAX_ROWS` |
 | Session TTL | 30 minutes | `ESXTOP_SESSION_TTL_MINUTES` |
 | Concurrent sessions | 4 | `ESXTOP_MAX_SESSIONS` |
+| Concurrent upload analyses | 1 | `ESXTOP_MAX_CONCURRENT_ANALYSES` |
 | Series per value request | 200 | `ESXTOP_MAX_REQUEST_SERIES` |
 | Cells per value request | 5,000,000 | `ESXTOP_MAX_REQUEST_CELLS` |
+| Upload password | unset (no gate) | `ESXTOP_UPLOAD_PASSWORD` |
+
+When `ESXTOP_UPLOAD_PASSWORD` is set, `POST /api/analyze` requires the matching `X-ESXTOP-Upload-Password` header. The browser import page prompts for it and keeps it in `sessionStorage` for the tab. The password is compared server-side with a constant-time comparison and is never embedded in the frontend bundle.
+
+Only `ESXTOP_MAX_CONCURRENT_ANALYSES` uploads are parsed at once (default **1**). A second upload receives **429** rather than competing for memory with a large analysis. Raise this only when the container has enough RAM and `/tmp` for multiple simultaneous captures.
 
 These are safety settings, not esxtop limits. Increase them for a larger single-user box; lower them for an exposed/multi-user deployment. The browser does **not** receive all sample arrays up front. Only metadata, statistics and findings are sent initially; charts fetch their visible series from `/api/series`, and the session database is deleted after the TTL or server shutdown.
 
-The 8M-cell/50k-column caps from the earlier version are gone. The 200,000-column ceiling covers the observed 145,697-column capture. The 20,000,000-cell limit allows 100 samples at the full 200,000-column width, or 137 samples of the observed 145,697-column capture; raise `ESXTOP_MAX_CELLS` for longer captures when the container has enough memory and `/tmp` space.
+The 8M-cell/50k-column caps from the earlier version are gone. The 200,000-column ceiling covers the observed 145,663-column capture. The 20,000,000-cell limit allows 100 samples at the full 200,000-column width, or 137 samples of the observed 145,663-column capture; raise `ESXTOP_MAX_CELLS` for longer captures when the container has enough memory and `/tmp` space.
 
 ### Sizing large captures
 
-A 145,697-column × 100-sample capture measured about **1.23 GiB peak RSS**. Plan with:
+A ~145k-column × 100-sample capture measured about **1.23 GiB peak RSS**. Plan with:
 
 ```text
 peak memory ≈ 0.6 GB fixed overhead + data cells × 48 bytes
 ```
 
-At 146,274 columns:
+At 145,663 columns:
 
 | Samples | Data cells | Approx. peak |
 |---:|---:|---:|
@@ -330,20 +398,20 @@ services:
       ESXTOP_MAX_SESSIONS: "2"
 ```
 
-`ESXTOP_MAX_CELLS=100000000` is comfortable at about 5–6 GB peak and allows 683 samples at 146k columns. `150000000` is the upper safe range at about 7.8 GB peak and 1,025 samples; monitor `docker stats`. Do not use 200M cells with 10 GB. Also raise the `/tmp` tmpfs (the upload and SQLite session live there), upload/decompressed limits for long raw CSVs, and lower concurrent sessions when captures are large. Set the values in `.env` or the Compose environment and recreate the container — a running process keeps its old limits. The [field guide](public/docs/esxtop-field-guide.md#sizing-large-captures) has the full table, sizing notes and the focused-capture alternative.
+`ESXTOP_MAX_CELLS=100000000` is comfortable at about 5–6 GB peak and allows 683 samples at 145,663 columns. `150000000` is the upper safe range at about 7.8 GB peak and 1,025 samples; monitor `docker stats`. Do not use 200M cells with 10 GB. Also raise the `/tmp` tmpfs (the upload and SQLite session live there), upload/decompressed limits for long raw CSVs, and lower concurrent sessions when captures are large. Set the values in `.env` or the Compose environment and recreate the container — a running process keeps its old limits. The [field guide](public/docs/esxtop-field-guide.md#sizing-large-captures) has the full table, sizing notes and the focused-capture alternative.
 
 ## API
 
 | Endpoint | Method | Description |
 | --- | --- | --- |
 | `/` | GET | App shell |
-| `/api/health` | GET | Version, limits and health |
+| `/api/health` | GET | Version, limits, health and whether the upload password gate is enabled |
 | `/api/demo` | GET | Bundled synthetic analysis |
-| `/api/analyze?name=...` | POST | Raw CSV/gzip body; returns metadata, stats, findings and a session ID |
-| `/api/series` | POST | `{session, ids}`; returns only the requested sample arrays |
+| `/api/analyze?name=...` | POST | Raw CSV/gzip body; returns metadata, stats, findings and a session ID. Requires `X-ESXTOP-Upload-Password` when the gate is enabled. |
+| `/api/series` | POST | `{session, ids}`; returns only the requested sample arrays. The random session ID is a bearer capability. |
 | `/version.json` | GET | Build metadata |
 
-The server sends `Content-Encoding: gzip` when the client accepts it, `Cache-Control: no-store`, CSP and related security headers. There is no CORS surface and no permanent database. Series sessions are temporary SQLite files in `/tmp`; override the location with `ESXTOP_SESSION_DIR` only if that path is private.
+The server sends `Content-Encoding: gzip` when the client accepts it, `Cache-Control: no-store`, CSP and related security headers. There is no CORS surface and no permanent database. Series sessions are temporary SQLite files in `/tmp`; override the location with `ESXTOP_SESSION_DIR` only if that path is private. Upload authentication deliberately fails closed for `POST /api/analyze` when `ESXTOP_UPLOAD_PASSWORD` is set and the header is missing or wrong; an incorrect password is indistinguishable from a missing one in the 401 response.
 
 ## Validation
 
@@ -361,10 +429,14 @@ The tests cover:
 - gzip detection by magic bytes, not filename;
 - PDH-CSV parsing, quoted fields, human-readable and abbreviated counters;
 - Vcpu/network/disk instance extraction and VM deduplication;
-- textual series preservation;
+- textual series preservation and zero-valued numeric series;
 - threshold findings and equivalent host CPU finding grouping;
+- every all-fields human counter name used by the reference capture, including allocation, PShare, VAAI/UNMAP, interrupt and power-state fields;
+- interrupt-category and vSAN-disabled observations;
+- presence-aware UI/report behaviour (verified in browser-based validation, not only unit tests);
 - temporary session storage and lazy series retrieval;
-- HTTP shell, CSP, static assets, field guide, demo and real gzip upload.
+- HTTP shell, CSP, static assets, field guide, demo and real gzip upload;
+- upload-password rejection and acceptance, including the server-side 401 gate.
 
 CI runs Python 3.10 and 3.12, JavaScript syntax checks, the smoke test and a Docker build on every push/PR.
 
@@ -380,7 +452,7 @@ ghcr.io/rogerbergling/esxtop-perf
 | --- | --- |
 | Push to `main` | `latest`, `main`, `sha-<short>` |
 | Push to another branch | `<branch>`, `sha-<short>` |
-| Tag `v1.7.0` | `v1.7.0`, `sha-<short>` |
+| Tag `v1.8.0` | `v1.8.0`, `sha-<short>` |
 | Manual run | Tags for the selected ref |
 
 No repository secrets are required; the workflow uses `GITHUB_TOKEN`. A new GHCR package is private by default. Make it public once, or authenticate the host with `read:packages`.

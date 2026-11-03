@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import os
 
 
@@ -52,6 +53,31 @@ def max_request_cells() -> int:
     return _int("ESXTOP_MAX_REQUEST_CELLS", 5_000_000)
 
 
+def max_concurrent_analyses() -> int:
+    return _int("ESXTOP_MAX_CONCURRENT_ANALYSES", 1)
+
+
+def upload_password() -> str:
+    """Return the optional upload password.
+
+    An empty value disables the upload gate. When set, the password is checked
+    server-side; it is never embedded in the frontend bundle.
+    """
+
+    return os.environ.get("ESXTOP_UPLOAD_PASSWORD", "")
+
+
+def upload_auth_required() -> bool:
+    return bool(upload_password())
+
+
+def verify_upload_password(provided: str | None) -> bool:
+    expected = upload_password()
+    if not expected:
+        return True
+    return hmac.compare_digest(str(provided or "").encode("utf-8"), expected.encode("utf-8"))
+
+
 def session_dir() -> str | None:
     value = os.environ.get("ESXTOP_SESSION_DIR", "").strip()
     return value or None
@@ -68,4 +94,5 @@ def public_limits() -> dict[str, int | str]:
         "maxSessions": max_sessions(),
         "maxRequestSeries": max_request_series(),
         "maxRequestCells": max_request_cells(),
+        "maxConcurrentAnalyses": max_concurrent_analyses(),
     }

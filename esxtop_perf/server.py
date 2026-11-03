@@ -58,6 +58,8 @@ SECURITY_HEADERS = {
 }
 
 SESSIONS = SessionStore()
+UPLOAD_PASSWORD_HEADER = "X-ESXTOP-Upload-Password"
+ANALYSIS_SLOTS = threading.BoundedSemaphore(config.max_concurrent_analyses())
 
 
 def _json_bytes(document: dict) -> bytes:
@@ -122,6 +124,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     "limits": config.public_limits(),
                     "sessions": SESSIONS.stats(),
                     "demo": DEMO_FILE.exists(),
+                    "uploadAuthRequired": config.upload_auth_required(),
                 }
             )
             return
@@ -170,8 +173,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _origin_ok(self) -> bool:
         origin = self.headers.get("Origin")
         if origin:
-            origin_host = urllib.parse.urlparse(origin).netloc
-            if origin_host and origin_host != self.headers.get("Host"):
+            parsed = urllib.parse.urlparse(origin)
+            origin_host = parsed.netloc
+            if (
+                origin.strip().lower() == "null"
+                or parsed.scheme not in {"http", "https"}
+                or not origin_host
+                or origin_host != self.headers.get("Host")
+            ):
                 self.close_connection = True
                 self._send_json({"ok": False, "error": "Cross-origin requests are not allowed."}, status=403)
                 return False
@@ -224,7 +233,34 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             traceback.print_exc()
             self._send_json({"ok": False, "error": "The requested series could not be loaded."}, status=500)
 
+    def _upload_auth_ok(self) -> bool:
+        if not config.upload_auth_required():
+            return True
+        if config.verify_upload_password(self.headers.get(UPLOAD_PASSWORD_HEADER)):
+            return True
+        self.close_connection = True
+        self._send_json(
+            {"ok": False, "error": "Upload password required or incorrect."},
+            status=401,
+        )
+        return False
+
     def _handle_analyze(self) -> None:
+        if not self._upload_auth_ok():
+            return
+        if not ANALYSIS_SLOTS.acquire(blocking=False):
+            self.close_connection = True
+            self._send_json(
+                {"ok": False, "error": "Another capture is already being analysed. Try again shortly."},
+                status=429,
+            )
+            return
+        try:
+            self._handle_analyze_unlocked()
+        finally:
+            ANALYSIS_SLOTS.release()
+
+    def _handle_analyze_unlocked(self) -> None:
         limit = config.max_upload_bytes()
         length = self._content_length(limit)
         if length is None:
@@ -345,6 +381,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  Serving : {WEB_ROOT}")
     print(f"  Open    : {url}")
     print(f"  Upload  : up to {config.max_upload_bytes() // (1024 * 1024)} MB")
+    print(f"  Password: {'required' if config.upload_auth_required() else 'not set'}")
     print("  Stop    : Ctrl+C")
     print()
 

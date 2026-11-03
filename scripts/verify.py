@@ -118,6 +118,10 @@ def main() -> int:
         check(url in guide, f"field guide missing reference: {url}")
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    guide = (ROOT / "public/docs/esxtop-field-guide.md").read_text(encoding="utf-8")
+    for marker in ("Field coverage and presence-aware views", "Present and zero", "vSAN requires vSAN to be enabled", "Application security and uploads", "ESXTOP_UPLOAD_PASSWORD", "Interrupts"):
+        check(marker in guide, f"field guide missing field/security documentation: {marker}")
+
     for phrase in ("Quick start", "Docker", "GHCR", "Watchtower", "Validation", "Project structure"):
         check(phrase.lower() in readme.lower(), f"README is missing section/keyword: {phrase}")
     check("### Sizing large captures" in readme, "README lacks large-capture sizing guidance")
@@ -126,8 +130,10 @@ def main() -> int:
     check("## Reports" in readme and "What to do next" in readme, "README lacks the report action-plan documentation")
     check("ghcr.io/rogerbergling/esxtop-perf" in readme, "README does not name the GHCR image")
     check("### Report scope" in readme, "README lacks report host/VM scope documentation")
-    for phrase in ("Hosts + VMs", "Hosts only", "Selected VMs only", "Six metric-category checkboxes", "filter the report capture-wide", "grouped by entity"):
-        check(phrase.lower() in readme.lower(), f"README lacks report scope/category documentation: {phrase}")
+    check("### Field coverage and presence-aware views" in readme, "README lacks field coverage/presence documentation")
+    check("### Upload password and public exposure" in readme, "README lacks upload-password security documentation")
+    for phrase in ("Hosts + VMs", "Hosts only", "Selected VMs only", "metric-category checkboxes", "Interrupts", "filter the report capture-wide", "grouped by entity", "Only metrics present in the capture are rendered", "vSAN fields are emitted only when vSAN is enabled", "ESXTOP_UPLOAD_PASSWORD", "never embedded in the frontend"):
+        check(phrase.lower() in readme.lower(), f"README lacks report/field/security documentation: {phrase}")
 
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     check("USER app" in dockerfile, "Dockerfile must run as an unprivileged user")
@@ -135,6 +141,10 @@ def main() -> int:
     check("CMD" in dockerfile, "Dockerfile must define a CMD")
     compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
     check("ghcr.io/rogerbergling/esxtop-perf:latest" in compose, "compose does not use the GHCR image")
+    check('ESXTOP_UPLOAD_PASSWORD' in compose, "compose does not pass ESXTOP_UPLOAD_PASSWORD")
+    check('ESXTOP_MAX_CONCURRENT_ANALYSES' in compose, "compose does not pass ESXTOP_MAX_CONCURRENT_ANALYSES")
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    check("ESXTOP_UPLOAD_PASSWORD" in env_example, ".env.example lacks ESXTOP_UPLOAD_PASSWORD")
     check("com.centurylinklabs.watchtower.enable=true" in compose, "compose is missing Watchtower enable label")
     check("containrrr/watchtower" in compose, "compose must use the containrrr Watchtower image")
     check("DOCKER_API_VERSION=1.44" in compose, "Watchtower must pin DOCKER_API_VERSION=1.44")
@@ -148,8 +158,15 @@ def main() -> int:
 
     # A few frontend route smoke assertions are cheap and catch accidental drift.
     app_js = (ROOT / "public/assets/js/app.js").read_text(encoding="utf-8")
-    for marker in ("#/guide", "#/capture", "#/metrics", "#/insights", "#/report", "renderOverview", "renderCapture", "renderReport", "uploadFile", "ensureSeries", "/api/series"):
+    for marker in ("#/guide", "#/capture", "#/metrics", "#/insights", "#/report", "renderOverview", "renderCapture", "renderReport", "uploadFile", "ensureSeries", "/api/series", "UPLOAD_PASSWORD_KEY", "X-ESXTOP-Upload-Password", "uploadAuthRequired"):
         check(marker in app_js, f"app.js missing route/feature marker: {marker}")
+
+    config_py = (ROOT / "esxtop_perf/config.py").read_text(encoding="utf-8")
+    for marker in ("ESXTOP_UPLOAD_PASSWORD", "upload_auth_required", "verify_upload_password", "hmac.compare_digest", "max_concurrent_analyses"):
+        check(marker in config_py, f"config.py missing upload-password marker: {marker}")
+    server_py = (ROOT / "esxtop_perf/server.py").read_text(encoding="utf-8")
+    for marker in ("UPLOAD_PASSWORD_HEADER", "_upload_auth_ok", "uploadAuthRequired", "status=401", "ANALYSIS_SLOTS", "status=429"):
+        check(marker in server_py, f"server.py missing upload-password marker: {marker}")
 
     parser_py = (ROOT / "esxtop_perf/parser.py").read_text(encoding="utf-8")
     check('"hosts": hosts' in parser_py, "parser must expose all capture hosts")
@@ -158,11 +175,11 @@ def main() -> int:
     check('"host": item.get("host", "")' in analysis_py, "findings must retain the ESXi host")
 
     report_js = (ROOT / "public/assets/js/report.js").read_text(encoding="utf-8")
-    for marker in ("VM storage detail", "Per-virtual-disk latency and I/O", "VM memory and network detail", "reportVmStorage(doc", "reportVmMemoryNetwork(doc", "DAVG", "QUED", "Aborts max", "Host snapshot", "Host disk adapters and devices", "reportHost(doc", "reportHostStorageRows(doc", "report-card-grid", "report-entity-card", "Complete metric appendix", "reportMetricAppendix(doc, categories)", "Every captured series is included below", "report-appendix-entity", "reportHostNames(doc)", "reportVmNames(doc", "reportScopedVmNames(doc", "reportBody(doc, scope = {})", "All ESXi hosts", "Selected VMs · capture report", "mode === 'all'", "reportCategorySet(scope)", "visibleRows.map", "categories.has('storage') ? reportHostStorageRows"):
+    for marker in ("VM storage detail", "Per-virtual-disk latency and I/O", "VM memory and network detail", "reportVmStorage(doc", "reportVmMemoryNetwork(doc", "DAVG", "QUED", "maxMetrics", "Host snapshot", "Host storage entities", "reportHost(doc", "reportHostStorageRows(doc", "report-card-grid", "report-entity-card", "Complete metric appendix", "reportMetricAppendix(doc, categories)", "Every captured series is included below", "report-appendix-entity", "reportHostNames(doc)", "reportVmNames(doc", "reportScopedVmNames(doc", "reportBody(doc, scope = {})", "All ESXi hosts", "Selected VMs · capture report", "mode === 'all'", "reportCategorySet(scope)", "visibleRows.map", "categories.has('storage') ? reportHostStorageRows", "hasMetric(doc", "reportTechnical(findings, categories, doc)", "reportActions(findings, categories, doc)"):
         check(marker in report_js, f"report.js missing report detail marker: {marker}")
 
     pages_js = (ROOT / "public/assets/js/pages.js").read_text(encoding="utf-8")
-    for marker in ("Storage bundle: Adapter + Device + VM Disk", "There is no separate Datastore panel in esxtop", "Real file · ESXi 8.0 U3", "Anatomy of a real <code>.esxtop60rc</code>", "ABCDEfGHIJkl", "Large sample count?", "Sizing large captures", "Capture report", "Export HTML", "Export PDF", "Export filtered metrics CSV", "report-metrics-csv", "reportBody(doc, generatedScope)", "report-hosts", "report-vms", "report-clear-vms", "report-scope-card", "report-generate", "data-report-mode", "report-scope-modes", "data-report-category", "report-categories-all", "All capture", "Hosts + VMs", "Hosts only", "Selected VMs only", "Technical vocabulary", "Technical detail", "How these counters fit together", "Support workflow", "Internal ESXi system worlds", "What <code>c</code>, <code>m</code>, <code>n</code>, <code>i</code> and <code>p</code> contain", "panel-reference-grid", "Storage-only sequence"):
+    for marker in ("Storage bundle: Adapter + Device + VM Disk", "There is no separate Datastore panel in esxtop", "Real file · ESXi 8.0 U3", "Anatomy of a real <code>.esxtop60rc</code>", "ABCDEfGHIJkl", "Large sample count?", "Sizing large captures", "Capture report", "Export HTML", "Export PDF", "Export filtered metrics CSV", "report-metrics-csv", "reportBody(doc, generatedScope)", "report-hosts", "report-vms", "report-clear-vms", "report-scope-card", "report-generate", "data-report-mode", "report-scope-modes", "data-report-category", "report-categories-all", "All capture", "Hosts + VMs", "Hosts only", "Selected VMs only", "upload-password", "hasMetric(doc", "vmColumns", "categorySeriesTable", "Interrupts", "Technical vocabulary", "Technical detail", "How these counters fit together", "Support workflow", "Internal ESXi system worlds", "What <code>c</code>, <code>m</code>, <code>n</code>, <code>i</code> and <code>p</code> contain", "panel-reference-grid", "Storage-only sequence"):
         check(marker in pages_js, f"Capture page missing multi-panel marker: {marker}")
     check("Real file · ESXi 6.0" not in pages_js, "Capture page must not label the ESXi 8.0 U3 rc as ESXi 6.0")
 

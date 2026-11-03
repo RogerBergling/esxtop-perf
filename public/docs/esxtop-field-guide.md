@@ -56,21 +56,21 @@ If you need to limit the entities, use `-export-entity` / `-import-entity` durin
 
 ### Transfer and retention
 
-The CSV can be tens or hundreds of megabytes, and the KB notes that some hosts have produced up to 120,000 columns. Observed all-metric captures can exceed that; one recent capture had 145,697 metric columns. Copy the file off the host, then remove it when the investigation is finished. Do not store the only copy on a datastore that may be failing.
+The CSV can be tens or hundreds of megabytes, and the KB notes that some hosts have produced up to 120,000 columns. Observed all-metric captures can exceed that; one recent capture had 145,663 metric columns. Copy the file off the host, then remove it when the investigation is finished. Do not store the only copy on a datastore that may be failing.
 
-The application defaults to 20,000,000 data cells, 200,000 metric columns and 50,000 samples. Those defaults admit the observed 145,697-column capture and allow 100 samples at the full 200,000-column width, or 137 samples of the observed capture. They are configurable with `ESXTOP_MAX_CELLS`, `ESXTOP_MAX_SERIES` and `ESXTOP_MAX_ROWS`.
+The application defaults to 20,000,000 data cells, 200,000 metric columns and 50,000 samples. Those defaults admit the observed 145,663-column capture and allow 100 samples at the full 200,000-column width, or 137 samples of the observed capture. They are configurable with `ESXTOP_MAX_CELLS`, `ESXTOP_MAX_SERIES` and `ESXTOP_MAX_ROWS`.
 
 Sample arrays are not sent to the browser with the first response. The parser stores them in a short-lived SQLite session; charts request only the series they display. This keeps the initial payload and browser memory small. Sessions expire after 30 minutes by default (`ESXTOP_SESSION_TTL_MINUTES`) and are deleted at shutdown.
 
 ### Sizing large captures
 
-The defaults are safety guardrails, not a statement about available RAM. A 145,697-column × 100-sample capture measured about **1.23 GiB peak RSS**. A useful planning formula is:
+The defaults are safety guardrails, not a statement about available RAM. A ~145k-column × 100-sample capture measured about **1.23 GiB peak RSS**. A useful planning formula is:
 
 ```text
 peak memory ≈ 0.6 GB fixed overhead + data cells × 48 bytes
 ```
 
-| Capture at 146,274 columns | Data cells | Approx. peak |
+| Capture at ~145k columns | Data cells | Approx. peak |
 |---|---:|---:|
 | 100 samples | 14.6M | ~1.3 GB |
 | 300 samples | 43.9M | ~2.6 GB |
@@ -82,7 +82,7 @@ peak memory ≈ 0.6 GB fixed overhead + data cells × 48 bytes
 
 The estimate covers parsing, analysis and the temporary SQLite session. It does not include browser memory. Leave 20–30% headroom below the container memory limit.
 
-At 146,274 columns, the cell limit determines the sample count:
+At 145,663 columns, the cell limit determines the sample count:
 
 | `ESXTOP_MAX_CELLS` | Approx. samples at 146k columns |
 |---:|---:|
@@ -126,7 +126,7 @@ services:
 Also account for:
 
 - **Restart required:** set these values in the Compose environment or `.env`, then recreate the container. A running process keeps the limits it read at startup.
-- **Columns:** `ESXTOP_MAX_SERIES` is 200,000; the observed 146,274-column capture fits. Raise it only for a wider capture.
+- **Columns:** `ESXTOP_MAX_SERIES` is 200,000; the observed 145,663-column capture fits. Raise it only for a wider capture.
 - **Rows:** `ESXTOP_MAX_ROWS` is 50,000. At 146k columns the cell limit binds long before this; it matters mainly for narrow captures.
 - **`/tmp`:** the temporary upload and SQLite session both live there. The default 2 GB tmpfs is not enough for a 100M-cell capture; use 4–6 GB.
 - **Upload and decompressed size:** `ESXTOP_MAX_UPLOAD_MB` and `ESXTOP_MAX_DECOMPRESSED_MB` apply before parsing. A long uncompressed CSV can exceed the 512 MB upload default even when RAM is available.
@@ -279,6 +279,29 @@ Important parsing details:
 The report's **Technical reference** expands these definitions, and the metric pages show the same notes for the selected counter.
 
 The file suffix is not reliable. The example command names a gzip stream `perf.csv`; ESXtop Lens inspects the first bytes (gzip magic `1f 8b`) rather than trusting the extension.
+
+### Field coverage and presence-aware views
+
+ESXtop Lens does not assume that a capture contains a fixed set of fields. Every non-empty column in the PDH-CSV header becomes a series. The catalogue normalises known fields to stable IDs, names and units; unknown vendor fields are retained as `RAW:<family>:<counter>` instead of being discarded.
+
+The reference all-fields capture used for this release contains **145,663 metric columns**, **10 samples**, **17 VMs**, and 223 distinct metric IDs across the CPU, memory, storage, network, power and interrupt panels. The parser must be able to represent all of them, but the GUI and report must not pretend that every possible field exists in every upload.
+
+The rule is:
+
+- **Present and zero:** show it. Zero is a real measurement.
+- **Present but empty at a particular sample:** show the series and the available samples; a missing sample is not the same as a missing field.
+- **Absent from the header:** omit the field entirely. Do not create a zero, a dash, a row or a filter checkbox for a field that was not captured.
+
+This is why the number of KPI cards, table columns, category tabs and report sections changes between captures. A focused capture of only `u` and `v` intentionally shows storage fields and hides CPU, memory, network, power and interrupt panels. The metric explorer and report appendix still contain every series that was actually captured. A field that exists in the capture can still be blank for an entity that does not emit it; that is different from inventing a field that was never captured.
+
+Some fields need care:
+
+- `Alloc Min`, `Alloc Max`, `Alloc Shares` and `Members` appear on both CPU and memory panels with different meanings and units. They are resolved by panel, not by display name alone.
+- `PShare Common MBytes` and `PShare Shared MBytes` are distinct counters and must not be combined.
+- On the Virtual Disk panel, `Average MilliSec/Read` and `Average MilliSec/Write` are the read/write latency fields (`LAT/rd`, `LAT/wr`). `Latency` is a separate vendor aggregate field.
+- `Link Speed (Mb/s)` is Mbps, not MB.
+- Interrupt Cookie fields are in a dedicated **Interrupts** category. They are not CPU scheduler counters.
+- Newer VAAI/UNMAP fields such as `ExtStats`, `ResSpace`, `LClone` and the unmap rates are catalogued, but public documentation is not uniform. The app preserves their captured values and units from the field names and says when the interpretation is release-specific.
 
 ## 4. Interactive mode survival sheet
 
@@ -482,8 +505,16 @@ Network performance is often CPU performance. Packet processing consumes host CP
 
 ## 9. vSAN and power
 
+### vSAN requires vSAN to be enabled
+
+The vSAN panel is not a general storage panel, and **vSAN counters are emitted only when vSAN is enabled on the host and the vSAN panel is included in the capture.** The reference all-fields capture used for this release reports `VSAN\Enabled? = 0`; only that one field is present, not the vSAN latency, component, resync or network counters. ESXtop Lens reports that fact in the capture observations. It does not invent vSAN data or treat the absence as a parser defect.
+
 - `SDLAT` (vSAN standard-deviation latency) measures latency variation. Yellow Bricks flags >5 ms. Use vSAN Observer or Skyline for disk-group, component, resync and network analysis.
 - `Power Usage Now Watts` and `Power Usage Cap Watts` describe host power. Sustained operation at the cap can mean the host is power-limited; correlate with CPU frequency, BIOS power policy and host performance.
+
+### Interrupts
+
+The interrupt panel is intentionally separate from the CPU scheduler category. Interrupt Cookie instances can be numerous — the reference capture contains 77,018 interrupt series — because the panel emits per-cookie and per-CPU variants. The Interrupts page shows the highest rates and processing times, while All metrics and the report appendix retain every captured series. A high interrupt rate with high processing time is more significant than either number alone; correlate it with the device, driver, NIC, HBA and CPU time.
 
 ## 10. Practical threshold matrix
 
@@ -564,7 +595,17 @@ Specific limits:
 - Gzip input, CSV structure and timestamps are validated, but the application does not execute commands or contact the ESXi host.
 - The parser still has configurable memory and time guardrails. A capture larger than the configured cell/column/row budget is rejected with an explicit `413` rather than risking an OOM kill. Raise the limits when the host has enough memory and temporary disk.
 
-## 13. Primary references
+## 13. Application security and uploads
+
+The upload path is not a code-execution path. The server writes the request body to a temporary file, parses it as CSV or gzip data, and deletes the temporary file. It does not execute, import, evaluate or shell out to uploaded content. The decompression, row, cell, column and session limits are the primary safeguards against malformed or oversized input.
+
+A publicly reachable unauthenticated upload endpoint is still a risk: a large or pathological capture can consume CPU, memory and temporary storage, and repeated uploads can cause a denial of service. Captures may also contain sensitive host, VM, datastore and device names.
+
+Set `ESXTOP_UPLOAD_PASSWORD` to require a server-side password for `POST /api/analyze`. The import page shows a password field, keeps the value in `sessionStorage` for the current tab, and sends it as `X-ESXTOP-Upload-Password`. The comparison uses `hmac.compare_digest`; the password never appears in the frontend bundle or `/api/health`. The demo, static site and `/api/series` are not covered by this upload gate. The series endpoint uses a random session ID as a bearer capability.
+
+Do not hardcode a password in HTML, JavaScript or a public repository. For internet exposure, use HTTPS, reverse-proxy authentication for the whole site, per-IP rate limiting, a strong random upload password, lower upload/memory limits, a read-only container, a bounded `/tmp`, and a non-root runtime. See the README section “Upload password and public exposure” for the deployment commands.
+
+## 14. Primary references
 
 - [Using the esxtop Utility — vSphere 8.0](https://techdocs.broadcom.com/us/en/vmware-cis/vsphere/vsphere/8-0/vsphere-monitoring-and-performance/performance-monitoring-utilities-resxtop-and-esxtop/using-the-esxtop-utility.html)
 - [Using Batch Mode — vSphere 8.0](https://techdocs.broadcom.com/us/en/vmware-cis/vsphere/vsphere/8-0/vsphere-monitoring-and-performance/performance-monitoring-utilities-resxtop-and-esxtop/using-batch-mode.html)

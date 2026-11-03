@@ -47,6 +47,7 @@ export function categoryLabel(category) {
     storage: 'Storage',
     network: 'Network',
     power: 'Power',
+    interrupt: 'Interrupts',
     other: 'Other',
   })[category] || category;
 }
@@ -58,6 +59,7 @@ export function categoryTone(category) {
     storage: 'warn',
     network: 'ok',
     power: 'orange',
+    interrupt: 'danger',
   })[category] || '';
 }
 
@@ -113,8 +115,10 @@ export function formatMetric(value, unit = '', digits = 2) {
   if (unit === 'ms') return `${formatNumber(number, 2)} ms`;
   if (unit === 'W') return `${formatNumber(number, 0)} W`;
   if (unit === '/s') return `${formatNumber(number, 1)}/s`;
+  if (unit === 'B/s') return `${formatNumber(number, 1)} B/s`;
   if (unit === 'bytes') return `${formatNumber(number, 0)} B`;
   if (unit === 'MHz') return `${formatNumber(number, 0)} MHz`;
+  if (unit === 'µs') return `${formatNumber(number, 2)} µs`;
   return `${formatNumber(number, digits)}${unit ? ` ${unit}` : ''}`;
 }
 
@@ -145,6 +149,31 @@ export function seriesNumbers(series) {
 
 export function seriesByMetric(document, metricId) {
   return (document?.series || []).filter((series) => series.metric === metricId);
+}
+
+export function hasMetric(document, metricId) {
+  return Boolean(document?.metrics && Object.prototype.hasOwnProperty.call(document.metrics, metricId));
+}
+
+export function hasAnyMetric(document, metricIds = []) {
+  return metricIds.some((metricId) => hasMetric(document, metricId));
+}
+
+export function hasAllMetric(document, metricIds = []) {
+  return metricIds.length > 0 && metricIds.every((metricId) => hasMetric(document, metricId));
+}
+
+export function isVcpuWorld(series) {
+  if (!String(series?.group || '').toLowerCase().startsWith('vcpu')) return false;
+  const world = String(series?.world || '').trim();
+  if (!world) return true;
+  return /(^|:)vmx-vcpu(?:[-_:]?\d+)/i.test(world) || /^vcpu[-_:]?\d+/i.test(world);
+}
+
+export function hasVcpuSeries(document) {
+  return (document?.series || []).some(isVcpuWorld)
+    || hasMetric(document, 'CPU_MEMBERS')
+    || hasMetric(document, 'MEM_MEMBERS');
 }
 
 export function metricById(document, metricId) {
@@ -227,7 +256,10 @@ export function vmSummary(document, name, host = null, categories = null) {
   const swapOut = pick('SWW/s');
   const numa = pick('N%L', 'p05', 'min');
   const active = pick('%ACTV');
-  const disk = pick('GAVG/cmd');
+  const diskFallback = [pick('LAT/rd'), pick('LAT/wr')]
+    .filter(Boolean)
+    .sort((left, right) => (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0))[0] || null;
+  const disk = pick('GAVG/cmd') || diskFallback || pick('VSCSI_LATENCY');
   const davg = pick('DAVG/cmd');
   const kavg = pick('KAVG/cmd');
   const qavg = pick('QAVG/cmd');
@@ -250,8 +282,8 @@ export function vmSummary(document, name, host = null, categories = null) {
   const configured = pick('MEMSZ', 'last');
   const granted = pick('GRANT', 'last');
   const consumed = pick('CNSM', 'last');
-  const members = pick('Members', 'last');
-  const vcpuSeries = list.filter((series) => series.group?.toLowerCase().startsWith('vcpu') && series.metric === '%USED');
+  const members = pick('CPU_MEMBERS', 'last') || pick('MEM_MEMBERS', 'last');
+  const vcpuSeries = list.filter((series) => isVcpuWorld(series));
   const worlds = new Set(vcpuSeries.map((series) => series.world || series.instance));
   const diskSeries = list.filter((series) => series.group?.toLowerCase().startsWith('virtual disk'));
   const vdisks = new Set(diskSeries.map((series) => series.instance || series.entity)).size;

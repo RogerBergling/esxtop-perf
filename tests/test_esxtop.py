@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 from esxtop_perf import config
 from esxtop_perf.analysis import build_analysis
-from esxtop_perf.catalog import canonical_metric, group_family
-from esxtop_perf.parser import CaptureError, parse_capture
+from esxtop_perf.catalog import canonical_metric, group_family, infer_unit, metric_definition
+from esxtop_perf.parser import CaptureError, _parse_vcpu_instance, _systemish, parse_capture
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "public" / "demo" / "esxtop-demo.csv"
@@ -29,6 +29,22 @@ class ConfigLimitTests(unittest.TestCase):
     def test_series_limit_remains_configurable(self) -> None:
         with patch.dict(os.environ, {"ESXTOP_MAX_SERIES": "250000"}):
             self.assertEqual(config.max_series(), 250_000)
+
+    def test_concurrent_analysis_limit_is_configurable(self) -> None:
+        with patch.dict(os.environ, {"ESXTOP_MAX_CONCURRENT_ANALYSES": "3"}):
+            self.assertEqual(config.max_concurrent_analyses(), 3)
+        with patch.dict(os.environ, {"ESXTOP_MAX_CONCURRENT_ANALYSES": ""}):
+            self.assertEqual(config.max_concurrent_analyses(), 1)
+
+    def test_upload_password_gate(self) -> None:
+        with patch.dict(os.environ, {"ESXTOP_UPLOAD_PASSWORD": "correct horse battery staple"}):
+            self.assertTrue(config.upload_auth_required())
+            self.assertTrue(config.verify_upload_password("correct horse battery staple"))
+            self.assertFalse(config.verify_upload_password("wrong"))
+            self.assertFalse(config.verify_upload_password(""))
+        with patch.dict(os.environ, {"ESXTOP_UPLOAD_PASSWORD": ""}):
+            self.assertFalse(config.upload_auth_required())
+            self.assertTrue(config.verify_upload_password(None))
 
 
 class DemoAnalysisTests(unittest.TestCase):
@@ -96,10 +112,13 @@ class DemoAnalysisTests(unittest.TestCase):
 
     def test_category_counts_are_consistent(self) -> None:
         categories = self.doc["summary"]["categories"]
-        self.assertEqual(categories["cpu"]["series"], 547)
+        self.assertEqual(categories["cpu"]["series"], 540)
         self.assertEqual(categories["memory"]["series"], 181)
         self.assertEqual(categories["storage"]["series"], 146)
         self.assertEqual(categories["network"]["series"], 60)
+        self.assertEqual(categories["power"]["series"], 9)
+        self.assertEqual(categories["interrupt"]["series"], 0)
+        self.assertEqual(categories["other"]["series"], 0)
         self.assertEqual(
             sum(item["series"] for item in categories.values()),
             len(self.doc["series"]),
@@ -148,6 +167,35 @@ class ParserEdgeTests(unittest.TestCase):
         disk = next(item for item in parsed["series"] if item["group"] == "Disk Device")
         self.assertEqual(disk["metric"], "%USD")
         self.assertEqual(parsed["vms"], ["DB01"])
+
+    def test_vcpu_helper_worlds_do_not_create_fake_vms(self) -> None:
+        header = (
+            '"(PDH-CSV 4.0) (UTC)(0)",'
+            '"\\\\lab\\Vcpu(10882:DNS-MAIL:2100228:vmx-filtPoll:DNS-MAIL)\\% Used",'
+            '"\\\\lab\\Vcpu(10882:DNS-MAIL:2100233:vmx-vcpu-0:DNS-MAIL)\\% Ready",'
+            '"\\\\lab\\Vcpu(1:drivers:2099001:vmx-vcpu-0)\\% Ready",'
+            '"\\\\lab\\Vcpu(1:system:2097153:idle1)\\% Ready"'
+        )
+        body = "\n".join(
+            f'"11/02/2026 12:00:0{index}","0","0","0","0"'
+            for index in range(2)
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8") as handle:
+            handle.write(f"{header}\n{body}\n")
+            name = handle.name
+        try:
+            parsed = parse_capture(name, "vcpu-helpers.csv")
+        finally:
+            Path(name).unlink(missing_ok=True)
+        self.assertEqual(parsed["vms"], ["DNS-MAIL"])
+        self.assertEqual(parsed["meta"]["vmCount"], 1)
+        worlds = {
+            item["world"]
+            for item in parsed["series"]
+            if item["vm"] == "DNS-MAIL"
+        }
+        self.assertEqual(worlds, {"vmx-filtPoll", "vmx-vcpu-0"})
+        self.assertTrue(all(item["scope"] == "host" for item in parsed["series"] if item["host"] and item["vm"] == ""))
 
     def test_system_worlds_are_not_classified_as_vms(self) -> None:
         header = (
@@ -291,6 +339,86 @@ class ParserEdgeTests(unittest.TestCase):
         self.assertEqual(canonical_metric("Group Memory(1:VM)", "Memctl Target MBytes"), "MCTLTGT")
         self.assertEqual(canonical_metric("Memory", "Memctl Target MBytes"), "MEMCTL_TARGET_MB")
         self.assertEqual(canonical_metric("Virtual Disk(VM (uuid):scsi0:0)", "Average Guest MilliSec/Command"), "GAVG/cmd")
+        # Allocation names are shared by the CPU and memory panels but mean
+        # different things and use different units.
+        self.assertEqual(canonical_metric("Group Cpu(1:VM)", "Alloc Min"), "CPU_ALLOC_MIN")
+        self.assertEqual(canonical_metric("Group Memory(1:VM)", "Alloc Min"), "MEM_ALLOC_MIN")
+        self.assertEqual(canonical_metric("Vcpu(1:VM:2:vmx)", "Members"), "CPU_MEMBERS")
+        self.assertEqual(canonical_metric("Group Memory(1:VM)", "Members"), "MEM_MEMBERS")
+        self.assertEqual(canonical_metric("Memory", "PShare Common MBytes"), "PSHARE_COMMON_MB")
+        self.assertEqual(canonical_metric("Memory", "PShare Shared MBytes"), "PSHARE_SHARED_MB")
+        self.assertEqual(canonical_metric("Group Memory(1:VM)", "Guest Memory on Numa Node 3"), "GUEST_MEM_NUMA")
+        self.assertEqual(canonical_metric("Virtual Disk(VM)", "Average MilliSec/Read"), "LAT/rd")
+        self.assertEqual(canonical_metric("Network Port(vmnic0)", "Link Speed (Mb/s)"), "SPEED")
+        self.assertEqual(canonical_metric("VSAN", "Enabled?"), "VSAN_ENABLED")
+        self.assertEqual(canonical_metric("Interrupt Cookie(0x0:CPU0)", "Interrupts/second"), "INT_COUNT/s")
+        self.assertEqual(metric_definition("INT_TIME/us", "Processing Time MicroSec/Interrupt")["unit"], "µs")
+        self.assertEqual(metric_definition("QAVG/rd", "Average Queue MilliSec/Read")["unit"], "ms")
+        self.assertEqual(metric_definition("MEM_ALLOC_MIN", "Alloc Min")["unit"], "MB")
+        self.assertEqual(infer_unit("Link Speed (Mb/s)"), "Mbps")
+
+    def test_vcpu_instance_forms_and_system_groups(self) -> None:
+        self.assertEqual(
+            _parse_vcpu_instance("10882:DNS-MAIL:2100228:vmx-filtPoll:DNS-MAIL"),
+            ("DNS-MAIL", "vmx-filtPoll"),
+        )
+        self.assertEqual(
+            _parse_vcpu_instance("10882:DNS-MAIL:2100233:vmx-vcpu-0:DNS-MAIL"),
+            ("DNS-MAIL", "vmx-vcpu-0"),
+        )
+        self.assertEqual(
+            _parse_vcpu_instance("1:system:2097859:tq:incompatTQ"),
+            ("system", "tq:incompatTQ"),
+        )
+        self.assertEqual(
+            _parse_vcpu_instance("1:system:2098101:0000:19:00.0-helper"),
+            ("system", "0000:19:00.0-helper"),
+        )
+        self.assertEqual(_parse_vcpu_instance("42:DB01:77:vmx-vcpu-0"), ("DB01", "vmx-vcpu-0"))
+        self.assertEqual(_parse_vcpu_instance("42:DB01:77"), ("DB01", ""))
+        for name in ("drivers", "ft", "net", "userworld", "virtscsi", "vmotion", "system", "hostd.20994601"):
+            self.assertTrue(_systemish(name), name)
+        for name in ("DNS-MAIL", "WIN11", "vCLS-4c4c4544-0058-4d10-805a-c7c04f534333"):
+            self.assertFalse(_systemish(name), name)
+
+    def test_all_field_human_names_are_catalogued(self) -> None:
+        header = (
+            '"(PDH-CSV 4.0) (UTC)(0)",'
+            '"\\\\lab\\Group Cpu(1:DB01)\\Alloc Min",'
+            '"\\\\lab\\Group Memory(1:DB01)\\Commit Pages Per Share",'
+            '"\\\\lab\\Virtual Disk(DB01)\\Average MilliSec/Read",'
+            '"\\\\lab\\Physical Disk SCSI Device(naa.1)\\Average Success Latency ms/ATS",'
+            '"\\\\lab\\Interrupt Cookie(0x0:CPU0)\\Interrupts/second",'
+            '"\\\\lab\\Interrupt Cookie(0x0:CPU0)\\Processing Time MicroSec/Interrupt",'
+            '"\\\\lab\\PCPU Power State(PCPU 0)\\%C-State C0",'
+            '"\\\\lab\\Network Port(100:DB01.eth0)\\Link Speed (Mb/s)",'
+            '"\\\\lab\\VSAN\\Enabled?",'
+            '"\\\\lab\\Memory\\PShare Common MBytes"'
+        )
+        body = "\n".join(
+            f'"11/02/2026 12:00:0{index}",' + ",".join('"0"' for _ in range(10))
+            for index in range(2)
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8") as handle:
+            handle.write(f"{header}\n{body}\n")
+            name = handle.name
+        try:
+            parsed = parse_capture(name, "all-fields.csv")
+            document = build_analysis(parsed)
+        finally:
+            Path(name).unlink(missing_ok=True)
+
+        self.assertEqual(parsed["meta"]["columns"], 10)
+        self.assertTrue(all(item["known"] for item in parsed["series"]))
+        self.assertTrue(all(
+            item["category"] in {"cpu", "memory", "storage", "network", "power", "interrupt", "other"}
+            for item in parsed["series"]
+        ))
+        interrupt = [item for item in document["series"] if item["category"] == "interrupt"]
+        self.assertEqual(len(interrupt), 2)
+        self.assertEqual(document["summary"]["categories"]["interrupt"]["series"], 2)
+        self.assertTrue(all(item["stats"]["count"] == 2 for item in interrupt))
+        self.assertTrue(any(obs["id"] == "vsan-not-enabled" for obs in document["observations"]))
 
 
 if __name__ == "__main__":

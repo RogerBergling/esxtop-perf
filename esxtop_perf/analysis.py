@@ -747,14 +747,15 @@ def build_analysis(parsed: dict[str, Any]) -> dict[str, Any]:
         metric_id = item["metric"]
         if metric_id not in metric_meta:
             definition = metric_definition(metric_id, item["counter"])
+            known = bool(definition.get("known"))
             metric_meta[metric_id] = {
                 "id": metric_id,
                 "name": definition.get("name", item["counter"]),
-                "unit": definition.get("unit", item.get("unit", "")),
-                "category": definition.get("category", item.get("category", "other")),
+                "unit": definition.get("unit") or item.get("unit", ""),
+                "category": definition.get("category") if known else item.get("category", "other"),
                 "description": definition.get("description", ""),
                 "thresholdNote": definition.get("threshold_note", ""),
-                "known": bool(definition.get("known")),
+                "known": known,
                 "references": expand_refs(definition.get("refs", [])),
             }
 
@@ -899,13 +900,14 @@ def build_analysis(parsed: dict[str, Any]) -> dict[str, Any]:
     else:
         headline = "Capture loaded; no curated rules matched these counters."
 
-    categories = ("cpu", "memory", "storage", "network", "power", "other")
+    categories = ("cpu", "memory", "storage", "network", "power", "interrupt", "other")
     category_summary: dict[str, dict[str, Any]] = {}
     for category in categories:
         category_findings = [item for item in findings if item["category"] == category]
         category_series = [item for item in series if item["category"] == category]
         category_summary[category] = {
             "status": _category_status(category_findings),
+            "present": bool(category_series),
             "findings": len(category_findings),
             "critical": sum(1 for item in category_findings if item["severity"] == "critical"),
             "warning": sum(1 for item in category_findings if item["severity"] == "warning"),
@@ -954,6 +956,50 @@ def build_analysis(parsed: dict[str, Any]) -> dict[str, Any]:
                 ),
             }
         )
+
+    panel_labels = {
+        "cpu": "CPU",
+        "memory": "memory",
+        "storage": "storage",
+        "network": "network",
+        "power": "power",
+        "interrupt": "interrupt",
+    }
+    missing_panels = [
+        label for category, label in panel_labels.items()
+        if not any(item["category"] == category for item in series)
+    ]
+    if missing_panels:
+        observations.append(
+            {
+                "id": "missing-panels",
+                "severity": "info",
+                "title": "Some panels were not captured",
+                "text": (
+                    "No " + ", ".join(missing_panels) + " counters are present in this capture. "
+                    "ESXtop Lens only renders counters that exist in the uploaded file; it does not "
+                    "invent rows or columns for fields that were disabled or excluded. Use -a or "
+                    "enable the relevant panel fields before the capture if that evidence is needed."
+                ),
+            }
+        )
+
+    vsan = next((item for item in series if item["metric"] == "VSAN_ENABLED"), None)
+    if vsan is not None:
+        vsan_last = vsan.get("stats", {}).get("last")
+        if vsan_last in (0, 0.0):
+            observations.append(
+                {
+                    "id": "vsan-not-enabled",
+                    "severity": "info",
+                    "title": "vSAN statistics are not present",
+                    "text": (
+                        "The capture reports vSAN as disabled (VSAN\\Enabled? = 0). "
+                        "vSAN-specific counters are emitted only when vSAN is enabled on the host. "
+                        "This is expected and is not a parser or capture defect."
+                    ),
+                }
+            )
 
     parsed["series"] = series
     parsed["findings"] = findings
