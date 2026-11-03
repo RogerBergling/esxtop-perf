@@ -164,14 +164,14 @@ def main() -> int:
 
     # A few frontend route smoke assertions are cheap and catch accidental drift.
     app_js = (ROOT / "public/assets/js/app.js").read_text(encoding="utf-8")
-    for marker in ("#/guide", "#/capture", "#/metrics", "#/insights", "#/report", "renderOverview", "renderCapture", "renderReport", "uploadFile", "ensureSeries", "/api/series", "UPLOAD_PASSWORD_KEY", "X-ESXTOP-Upload-Password", "uploadAuthRequired"):
+    for marker in ("#/guide", "#/capture", "#/metrics", "#/insights", "#/report", "renderOverview", "renderCapture", "renderReport", "uploadFile", "ensureSeries", "/api/series", "/api/upload-auth", "checkUploadPassword", "UPLOAD_PASSWORD_KEY", "X-ESXTOP-Upload-Password", "uploadAuthRequired"):
         check(marker in app_js, f"app.js missing route/feature marker: {marker}")
 
     config_py = (ROOT / "esxtop_perf/config.py").read_text(encoding="utf-8")
     for marker in ("ESXTOP_UPLOAD_PASSWORD", "upload_auth_required", "verify_upload_password", "hmac.compare_digest", "max_concurrent_analyses", "max_concurrent_requests", "request_timeout_seconds"):
         check(marker in config_py, f"config.py missing upload-password marker: {marker}")
     server_py = (ROOT / "esxtop_perf/server.py").read_text(encoding="utf-8")
-    for marker in ("UPLOAD_PASSWORD_HEADER", "_upload_auth_ok", "uploadAuthRequired", "status=401", "ANALYSIS_SLOTS", "status=429", "BoundedThreadingHTTPServer", "BUSY_RESPONSE", "request_timeout_seconds", "X-Robots-Tag"):
+    for marker in ("UPLOAD_PASSWORD_HEADER", "_upload_auth_ok", "uploadAuthRequired", "status=401", "ANALYSIS_SLOTS", "status=429", "BoundedThreadingHTTPServer", "BUSY_RESPONSE", "request_timeout_seconds", "X-Robots-Tag", "/api/upload-auth"):
         check(marker in server_py, f"server.py missing upload-password marker: {marker}")
 
     parser_py = (ROOT / "esxtop_perf/parser.py").read_text(encoding="utf-8")

@@ -167,6 +167,7 @@ When the variable is set:
 
 - `POST /api/analyze` returns **401** unless the request carries `X-ESXTOP-Upload-Password`;
 - the import page shows an upload-password field;
+- the browser first verifies the password against `GET /api/upload-auth` before sending a file, so a wrong password produces a clear message instead of a network error while a large body is in flight;
 - the value is kept in `sessionStorage` for that tab, not `localStorage`;
 - the server compares it with `hmac.compare_digest` and never includes it in `/api/health` or server-rendered HTML (the browser fills the password field from `sessionStorage`);
 - an incorrect password produces the same generic error as a missing password.
@@ -175,11 +176,22 @@ When the variable is set:
 
 The upload password protects **file upload**, not the entire application. The bundled demo, static assets, health endpoint and session-based chart API remain reachable. If that is not acceptable, use reverse-proxy authentication for the whole site.
 
+If the import page reports “Could not reach the analysis server”, verify that the container/server is running, the URL and port are reachable from the browser, and any reverse proxy forwards `X-ESXTOP-Upload-Password`, permits the upload body size, and has a read timeout longer than the upload. If it reports “upload password was rejected”, re-check the exact value in `ESXTOP_UPLOAD_PASSWORD` and the password typed into the page.
+
+A quick password/proxy check from the machine running the browser:
+
+```bash
+curl -i -H "X-ESXTOP-Upload-Password: YOUR_PASSWORD" \
+  http://localhost:8004/api/upload-auth
+```
+
+`200` means the password and proxy header path work. `401` means the password is wrong or the proxy strips the header. A connection error means the server/port is not reachable.
+
 ### Build the image
 
 ```bash
 docker build \
-  --build-arg APP_VERSION=1.8.1 \
+  --build-arg APP_VERSION=1.8.2 \
   --build-arg IMAGE_TAG=local \
   --build-arg GIT_SHA="$(git rev-parse --short HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -486,6 +498,7 @@ services:
 | --- | --- | --- |
 | `/` | GET | App shell |
 | `/api/health` | GET | Limits, health and whether the upload password gate is enabled |
+| `/api/upload-auth` | GET | Verifies `X-ESXTOP-Upload-Password` without reading a file body; returns 401 if rejected |
 | `/api/demo` | GET | Bundled synthetic analysis |
 | `/api/analyze?name=...` | POST | Raw CSV/gzip body; returns metadata, stats, findings and a session ID. Requires `X-ESXTOP-Upload-Password` when the gate is enabled. |
 | `/api/series` | POST | `{session, ids}`; returns only the requested sample arrays. The random session ID is a bearer capability. |
@@ -535,7 +548,7 @@ ghcr.io/rogerbergling/esxtop-perf
 | --- | --- |
 | Push to `main` | `latest`, `main`, `sha-<short>` |
 | Push to another branch | `<branch>`, `sha-<short>` |
-| Tag `v1.8.1` | `v1.8.1`, `sha-<short>` |
+| Tag `v1.8.2` | `v1.8.2`, `sha-<short>` |
 | Manual run | Tags for the selected ref |
 
 No repository secrets are required; the workflow uses `GITHUB_TOKEN`. A new GHCR package is private by default. Make it public once, or authenticate the host with `read:packages`.

@@ -285,6 +285,23 @@ class UploadPasswordSmokeTests(unittest.TestCase):
         self.assertTrue(document["ok"])
         self.assertEqual(document["meta"]["columns"], 936)
 
+    def test_upload_password_preflight(self) -> None:
+        for password, expected in ((None, 401), ("wrong", 401), ("smoke-secret", 200)):
+            with self.subTest(password=password):
+                headers = {}
+                if password is not None:
+                    headers["X-ESXTOP-Upload-Password"] = password
+                request = urllib.request.Request(f"{self.base}/api/upload-auth", headers=headers)
+                try:
+                    response = self.opener.open(request, timeout=20)
+                except urllib.error.HTTPError as error:
+                    self.assertEqual(error.code, expected)
+                    error.close()
+                else:
+                    self.assertEqual(response.status, expected)
+                    payload = json.loads(response.read().decode("utf-8"))
+                    self.assertTrue(payload["ok"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

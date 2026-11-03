@@ -223,7 +223,17 @@ async function ensureSeries(ids) {
   }
 }
 
-function uploadFile(file) {
+async function checkUploadPassword(password) {
+  const response = await fetch('/api/upload-auth', {
+    cache: 'no-store',
+    headers: { 'X-ESXTOP-Upload-Password': password },
+  });
+  if (response.status === 401) return false;
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return true;
+}
+
+async function uploadFile(file) {
   if (!file) return;
   const password = uploadPassword();
   if (state.health?.uploadAuthRequired && !password) {
@@ -232,11 +242,31 @@ function uploadFile(file) {
     render();
     return;
   }
-  if (state.health?.maxUploadBytes && file.size > state.health.maxUploadBytes) {
-    state.error = `The file is ${(file.size / 1024 / 1024).toFixed(1)} MB, larger than the server limit of ${(state.health.maxUploadBytes / 1024 / 1024).toFixed(0)} MB.`;
+  const maxUploadBytes = Number(state.health?.limits?.uploadBytes || state.health?.maxUploadBytes || 0);
+  if (maxUploadBytes && file.size > maxUploadBytes) {
+    state.error = `The file is ${(file.size / 1024 / 1024).toFixed(1)} MB, larger than the server limit of ${(maxUploadBytes / 1024 / 1024).toFixed(0)} MB.`;
     window.location.hash = '#/import';
     render();
     return;
+  }
+  if (state.health?.uploadAuthRequired && password) {
+    showLoading('Checking upload password…', 'Verifying the password before sending the capture.', 2, 'Local analysis server');
+    try {
+      const accepted = await checkUploadPassword(password);
+      if (!accepted) {
+        hideLoading();
+        state.error = 'The upload password was rejected. Check the value in ESXTOP_UPLOAD_PASSWORD and the password entered on the import page.';
+        window.location.hash = '#/import';
+        render();
+        return;
+      }
+    } catch (error) {
+      hideLoading();
+      state.error = `Could not reach the analysis server to verify the upload password (${error.message}). Check that the container or start.py is running, the URL/port is reachable, and any reverse proxy forwards the X-ESXTOP-Upload-Password header.`;
+      window.location.hash = '#/import';
+      render();
+      return;
+    }
   }
   showLoading('Reading capture…', 'Uploading the file to the local parser.', 2, `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} MB`);
   const xhr = new XMLHttpRequest();
@@ -280,7 +310,7 @@ function uploadFile(file) {
   });
   xhr.addEventListener('error', () => {
     hideLoading();
-    state.error = 'Could not reach the local analysis server. Is the container or start.py still running?';
+    state.error = 'Could not reach the analysis server during upload. Check that the container or start.py is still running, the URL/port is reachable, and any reverse proxy allows the upload body size and timeout.';
     window.location.hash = '#/import';
     render();
   });

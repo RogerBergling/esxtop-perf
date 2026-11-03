@@ -169,6 +169,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 }
             )
             return
+        if path == "/api/upload-auth":
+            if not self._upload_auth_ok():
+                return
+            self._send_json({"ok": True})
+            return
         if path == "/api/demo":
             try:
                 if not DEMO_FILE.exists():
