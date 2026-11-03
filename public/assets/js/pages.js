@@ -916,7 +916,7 @@ export function renderReport(ctx) {
       <div class="page-head">
         <div class="eyebrow">Export · capture report</div>
         <h1>Capture report</h1>
-        <p class="page-lede">A standalone report with the executive summary, a prioritized “What to do next” action plan, every finding, a VM summary, per-disk storage detail, memory/network detail and a technical reference. The HTML file opens without the app; the PDF button opens the browser print dialog.</p>
+        <p class="page-lede">A standalone report with the executive summary, a prioritized “What to do next” action plan, every finding, a host snapshot, host disk adapters/devices, a VM summary, per-disk storage latency, memory/network detail and a technical reference. The HTML file opens without the app; the PDF button opens the browser print dialog.</p>
         <div class="summary-actions report-toolbar">
           <button class="btn btn-primary" type="button" id="report-html">${icon('download', 15)} Export HTML</button>
           <button class="btn" type="button" id="report-pdf">${icon('file', 15)} Export PDF</button>

@@ -66,9 +66,18 @@ const REPORT_CSS = `
 .capture-report .report-table th { color: var(--rp-muted); font-size: .66rem; letter-spacing: .06em; text-transform: uppercase; background: var(--rp-panel); }
 .capture-report .report-table td.num, .capture-report .report-table th.num { text-align: right; white-space: nowrap; }
 .capture-report .report-table tr:last-child td { border-bottom: 0; }
-.capture-report .report-table.report-wide { font-size: .7rem; }
-.capture-report .report-table.report-wide th, .capture-report .report-table.report-wide td { padding: .34rem .35rem; white-space: nowrap; }
 .capture-report h4 { font-size: .82rem; margin: 1rem 0 .35rem; }
+.capture-report .report-table-wrap { width: 100%; max-width: 100%; overflow-x: auto; margin: .5rem 0 1rem; }
+.capture-report .report-table-wrap .report-table { margin: 0; }
+.capture-report .report-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; margin: .5rem 0 1rem; }
+.capture-report .report-entity-card { border: 1px solid var(--rp-line); border-radius: 9px; background: #fff; padding: .6rem .7rem; break-inside: avoid; min-width: 0; }
+.capture-report .report-entity-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .4rem; margin-bottom: .45rem; }
+.capture-report .report-entity-head strong { display: block; font-size: .84rem; line-height: 1.25; overflow-wrap: anywhere; }
+.capture-report .report-entity-meta { display: block; color: var(--rp-muted); font-size: .68rem; margin-top: .1rem; }
+.capture-report .report-metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .28rem .45rem; }
+.capture-report .report-metric { min-width: 0; }
+.capture-report .report-metric span { display: block; color: var(--rp-muted); font-size: .57rem; letter-spacing: .04em; text-transform: uppercase; line-height: 1.2; }
+.capture-report .report-metric strong { display: block; color: var(--rp-ink); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .7rem; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
 .capture-report .report-finding { border: 1px solid var(--rp-line); border-left: 4px solid var(--rp-muted); border-radius: 8px; background: #fff; padding: .7rem .8rem; margin: .55rem 0; break-inside: avoid; }
 .capture-report .report-finding.critical { border-left-color: var(--rp-critical); }
 .capture-report .report-finding.warning, .capture-report .report-finding.warn { border-left-color: var(--rp-warn); }
@@ -121,7 +130,12 @@ const REPORT_CSS = `
 @page { size: A4; margin: 12mm; }
 @media print {
   .report-print-bar, .report-toolbar, .topbar, .capture-bar, .footer, .category-tabs { display: none !important; }
-  .capture-report .report-table.report-wide { font-size: 6.5pt; }
+  .capture-report .report-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .capture-report .report-entity-card { break-inside: avoid; }
+  .capture-report .report-table-wrap { overflow: visible; }
+  .capture-report .report-table { font-size: 6.8pt; }
+  .capture-report .report-table th, .capture-report .report-table td { padding: .25rem .25rem; }
+  .capture-report .report-table th { white-space: normal; }
   .report-standalone { background: #fff; }
   .report-standalone .capture-report, .capture-report { max-width: none; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; }
   .capture-report h2 { break-after: avoid; }
@@ -135,6 +149,8 @@ const REPORT_CSS = `
   .capture-report .report-evidence { margin-left: 0; }
   .capture-report .report-table { display: block; max-width: 100%; overflow-x: auto; }
   .capture-report .report-table th, .capture-report .report-table td { white-space: nowrap; }
+  .capture-report .report-card-grid { grid-template-columns: 1fr; }
+  .capture-report .report-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 `;
 
@@ -282,6 +298,134 @@ function reportTechnical(findings) {
     ${categories}`;
 }
 
+function reportEntityCard({ title, subtitle, status, metrics }) {
+  return `<article class="report-entity-card">
+    <div class="report-entity-head">
+      <div><strong>${esc(title)}</strong>${subtitle ? `<span class="report-entity-meta">${esc(subtitle)}</span>` : ''}</div>
+      ${badgeFor(status || 'neutral')}
+    </div>
+    <div class="report-metric-grid">
+      ${metrics.map(([label, value]) => `<div class="report-metric"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join('')}
+    </div>
+  </article>`;
+}
+
+function reportHostSeries(doc, metric, predicate = () => true) {
+  return (doc.series || []).filter((series) => (
+    series.metric === metric &&
+    series.scope === 'host' &&
+    series.kind === 'numeric' &&
+    series.stats?.count &&
+    predicate(series)
+  ));
+}
+
+function reportHostPick(doc, metric, predicate = () => true, field = 'p95', mode = 'max') {
+  const candidates = reportHostSeries(doc, metric, predicate);
+  if (!candidates.length) return null;
+  return candidates.sort((left, right) => (
+    mode === 'min'
+      ? (Number(left.stats?.[field]) || Infinity) - (Number(right.stats?.[field]) || Infinity)
+      : (Number(right.stats?.[field]) || -Infinity) - (Number(left.stats?.[field]) || -Infinity)
+  ))[0];
+}
+
+function reportHostStorageRows(doc) {
+  const map = new Map();
+  for (const series of doc.series || []) {
+    if (series.scope !== 'host' || series.category !== 'storage' || series.kind !== 'numeric') continue;
+    const key = `${series.group}|${series.instance || series.entity}`;
+    let row = map.get(key);
+    if (!row) {
+      row = { key, group: series.group, instance: series.instance || series.entity, series: {} };
+      map.set(key, row);
+    }
+    if (!row.series[series.metric] || (Number(series.stats?.p95) || 0) > (Number(row.series[series.metric]?.stats?.p95) || 0)) {
+      row.series[series.metric] = series;
+    }
+  }
+  const rows = [...map.values()].filter((row) => (
+    ['GAVG/cmd', 'DAVG/cmd', 'KAVG/cmd', 'QAVG/cmd', 'CMDS/s'].some((metric) => row.series[metric])
+  ));
+  return rows.sort((left, right) => (
+    (Number(right.series['GAVG/cmd']?.stats?.p95) || 0) - (Number(left.series['GAVG/cmd']?.stats?.p95) || 0) ||
+    (Number(right.series['CMDS/s']?.stats?.p95) || 0) - (Number(left.series['CMDS/s']?.stats?.p95) || 0)
+  ));
+}
+
+function hostStorageValue(row, metric, field = 'p95') {
+  return row?.series?.[metric]?.stats?.[field] ?? null;
+}
+
+function reportHost(doc) {
+  const cpuTotal = reportHostPick(doc, 'PCPU %', (series) => series.instance === '_Total')
+    || reportHostPick(doc, 'PCPU_UTIL', (series) => series.instance === '_Total')
+    || reportHostPick(doc, 'PCPU %')
+    || reportHostPick(doc, 'PCPU_UTIL');
+  const cpuCore = reportHostPick(doc, 'PCPU %', (series) => series.instance !== '_Total')
+    || reportHostPick(doc, 'CORE_UTIL', (series) => series.instance !== '_Total');
+  const load = reportHostPick(doc, 'LOAD1');
+  const free = reportHostPick(doc, 'FREE_MB', () => true, 'last');
+  const machine = reportHostPick(doc, 'MACHINE_MB', () => true, 'last');
+  const overcommit = reportHostPick(doc, 'OVERCOMMIT1');
+  const balloon = reportHostPick(doc, 'MEMCTL_CURRENT_MB');
+  const swap = reportHostPick(doc, 'SWAP_USED_MB');
+  const swapIn = reportHostPick(doc, 'SWAP_READ');
+  const swapOut = reportHostPick(doc, 'SWAP_WRITE');
+  const gavg = reportHostPick(doc, 'GAVG/cmd');
+  const qued = reportHostPick(doc, 'QUED');
+  const drops = [
+    reportHostPick(doc, '%DRPTX'),
+    reportHostPick(doc, '%DRPRX'),
+  ].filter(Boolean).sort((left, right) => (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0))[0] || null;
+  const freePct = free?.stats?.last && machine?.stats?.last ? (free.stats.last / machine.stats.last) * 100 : null;
+  const rows = [
+    ['Physical CPU total P95', cpuTotal ? formatMetric(cpuTotal.stats?.p95, '%') : '—', cpuTotal?.status || 'neutral'],
+    ['Busiest physical core P95', cpuCore ? formatMetric(cpuCore.stats?.p95, '%') : '—', cpuCore?.status || 'neutral'],
+    ['CPU load 1m P95', formatMetric(load?.stats?.p95, ''), load?.status || 'neutral'],
+    ['Free memory last', free ? `${formatMetric(free.stats?.last, 'MB')}${freePct !== null ? ` (${formatNumber(freePct, 1)}% of machine)` : ''}` : '—', free?.status || 'neutral'],
+    ['Memory overcommit P95', formatMetric(overcommit?.stats?.p95, ''), overcommit?.status || 'neutral'],
+    ['Host balloon P95', formatMetric(balloon?.stats?.p95, 'MB'), balloon?.status || 'neutral'],
+    ['Host swap used P95', formatMetric(swap?.stats?.p95, 'MB'), swap?.status || 'neutral'],
+    ['Host swap I/O P95', `${formatMetric(swapIn?.stats?.p95, 'MB/s')} read / ${formatMetric(swapOut?.stats?.p95, 'MB/s')} write`, worstStatus([swapIn?.status, swapOut?.status].filter(Boolean))],
+    ['Host storage GAVG P95', formatMetric(gavg?.stats?.p95, 'ms'), gavg?.status || 'neutral'],
+    ['Host storage QUED P95', formatMetric(qued?.stats?.p95, ''), qued?.status || 'neutral'],
+    ['Host network drops P95', drops ? formatMetric(drops.stats?.p95, '%') : '—', drops?.status || 'neutral'],
+  ];
+  const storageRows = reportHostStorageRows(doc);
+  const hostTable = `<table class="report-table report-host-table">
+    <thead><tr><th>Host signal</th><th class="num">Value</th><th>Status</th></tr></thead>
+    <tbody>${rows.map(([label, value, status]) => `<tr><td>${esc(label)}</td><td class="num">${esc(value)}</td><td>${badgeFor(status)}</td></tr>`).join('')}</tbody>
+  </table>`;
+  const storageCards = storageRows.length ? `<h3>Host disk adapters and devices</h3>
+    <p class="report-note">All host-scope storage entities in the capture, sorted by GAVG P95. Latency and queue values are P95; abort/reset values are capture maxima. <code>—</code> means the counter was not captured.</p>
+    <div class="report-card-grid">
+      ${storageRows.map((row) => reportEntityCard({
+        title: row.instance || row.group,
+        subtitle: row.group,
+        status: worstStatus(Object.values(row.series).map((series) => series.status)),
+        metrics: [
+          ['IOPS', formatMetric(hostStorageValue(row, 'CMDS/s'), '/s')],
+          ['MB Read/s', formatMetric(hostStorageValue(row, 'MBREAD/s'), 'MB/s')],
+          ['MB Write/s', formatMetric(hostStorageValue(row, 'MBWRTN/s'), 'MB/s')],
+          ['GAVG', formatMetric(hostStorageValue(row, 'GAVG/cmd'), 'ms')],
+          ['DAVG', formatMetric(hostStorageValue(row, 'DAVG/cmd'), 'ms')],
+          ['KAVG', formatMetric(hostStorageValue(row, 'KAVG/cmd'), 'ms')],
+          ['QAVG', formatMetric(hostStorageValue(row, 'QAVG/cmd'), 'ms')],
+          ['Read lat', formatMetric(hostStorageValue(row, 'LAT/rd'), 'ms')],
+          ['Write lat', formatMetric(hostStorageValue(row, 'LAT/wr'), 'ms')],
+          ['QUED', formatMetric(hostStorageValue(row, 'QUED'), '')],
+          ['ACTV', formatMetric(hostStorageValue(row, 'ACTV'), '')],
+          ['Aborts max', formatMetric(hostStorageValue(row, 'ABRTS/s', 'max'), '/s')],
+          ['Resets max', formatMetric(hostStorageValue(row, 'RESETS/s', 'max'), '/s')],
+        ],
+      })).join('')}
+    </div>` : '';
+  return `<p class="report-note">Host counters are P95 over the capture window unless marked “last”. Latency is split into GAVG, DAVG and KAVG; the host storage cards below include every host-scope adapter/device captured.</p>
+    ${hostTable}
+    ${storageCards}`;
+}
+
 function reportVms(doc) {
   const names = doc.vms || [];
   if (!names.length) {
@@ -305,10 +449,10 @@ function reportVms(doc) {
     </tr>`;
   }).join('');
   return `<p class="report-note">Only VM groups are listed. ESXi system worlds such as <code>system1</code>, <code>hostd.20994601</code> and <code>python.20979311</code> are excluded from this table and from VM-scoped findings.</p>
-    <table class="report-table">
+    <div class="report-table-wrap"><table class="report-table">
       <thead><tr><th>Virtual machine</th><th class="num">vCPU</th><th class="num">Memory</th><th class="num">CPU P95</th><th class="num">%RDY P95</th><th class="num">%MLMTD P95</th><th class="num">%CSTP P95</th><th class="num">Balloon P95</th><th class="num">Swap P95</th><th class="num">GAVG P95</th><th>Status</th></tr></thead>
       <tbody>${rows}</tbody>
-    </table>`;
+    </table></div>`;
 }
 
 function diskRowsForVm(vm) {
@@ -349,7 +493,7 @@ function diskStatus(row) {
 function reportVmStorage(doc) {
   const names = doc.vms || [];
   const summaryRows = [];
-  const diskRows = [];
+  const diskCards = [];
   for (const name of names) {
     const vm = vmSummary(doc, name);
     const rows = diskRowsForVm(vm);
@@ -362,83 +506,80 @@ function reportVmStorage(doc) {
       <td><strong>${esc(name)}</strong></td>
       <td class="num">${rows.length}</td>
       <td class="num">${formatMetric(diskValue(worst, 'CMDS/s'), '/s')}</td>
-      <td class="num">${formatMetric(diskValue(worst, 'READS/s'), '/s')}</td>
-      <td class="num">${formatMetric(diskValue(worst, 'WRITES/s'), '/s')}</td>
       <td class="num">${formatMetric(diskValue(worst, 'MBREAD/s'), 'MB/s')}</td>
       <td class="num">${formatMetric(diskValue(worst, 'MBWRTN/s'), 'MB/s')}</td>
       <td class="num">${formatMetric(diskValue(worst, 'GAVG/cmd'), 'ms')}</td>
       <td class="num">${formatMetric(diskValue(worst, 'DAVG/cmd'), 'ms')}</td>
       <td class="num">${formatMetric(diskValue(worst, 'KAVG/cmd'), 'ms')}</td>
-      <td class="num">${formatMetric(diskValue(worst, 'QAVG/cmd'), 'ms')}</td>
-      <td class="num">${formatMetric(diskValue(worst, 'QUED'), '')}</td>
       <td>${badgeFor(diskStatus(worst))}</td>
     </tr>`);
     for (const row of rows) {
-      diskRows.push(`<tr>
-        <td>${esc(name)}</td>
-        <td class="mono">${esc(diskLabel(row.key))}</td>
-        <td class="num">${formatMetric(diskValue(row, 'CMDS/s'), '/s')}</td>
-        <td class="num">${formatMetric(diskValue(row, 'READS/s'), '/s')}</td>
-        <td class="num">${formatMetric(diskValue(row, 'WRITES/s'), '/s')}</td>
-        <td class="num">${formatMetric(diskValue(row, 'MBREAD/s'), 'MB/s')}</td>
-        <td class="num">${formatMetric(diskValue(row, 'MBWRTN/s'), 'MB/s')}</td>
-        <td class="num">${formatMetric(diskValue(row, 'GAVG/cmd'), 'ms')}</td>
-        <td class="num">${formatMetric(diskValue(row, 'DAVG/cmd'), 'ms')}</td>
-        <td class="num">${formatMetric(diskValue(row, 'KAVG/cmd'), 'ms')}</td>
-        <td class="num">${formatMetric(diskValue(row, 'QAVG/cmd'), 'ms')}</td>
-        <td class="num">${formatMetric(diskValue(row, 'QUED'), '')}</td>
-        <td class="num">${formatMetric(diskValue(row, 'ACTV'), '')}</td>
-        <td class="num">${formatMetric(diskValue(row, 'ABRTS/s', 'max'), '/s')}</td>
-        <td class="num">${formatMetric(diskValue(row, 'RESETS/s', 'max'), '/s')}</td>
-        <td>${badgeFor(diskStatus(row))}</td>
-      </tr>`);
+      diskCards.push(reportEntityCard({
+        title: `${name} · ${diskLabel(row.key)}`,
+        subtitle: 'Virtual disk',
+        status: diskStatus(row),
+        metrics: [
+          ['IOPS', formatMetric(diskValue(row, 'CMDS/s'), '/s')],
+          ['Read/s', formatMetric(diskValue(row, 'READS/s'), '/s')],
+          ['Write/s', formatMetric(diskValue(row, 'WRITES/s'), '/s')],
+          ['MB Read/s', formatMetric(diskValue(row, 'MBREAD/s'), 'MB/s')],
+          ['MB Write/s', formatMetric(diskValue(row, 'MBWRTN/s'), 'MB/s')],
+          ['GAVG', formatMetric(diskValue(row, 'GAVG/cmd'), 'ms')],
+          ['DAVG', formatMetric(diskValue(row, 'DAVG/cmd'), 'ms')],
+          ['KAVG', formatMetric(diskValue(row, 'KAVG/cmd'), 'ms')],
+          ['QAVG', formatMetric(diskValue(row, 'QAVG/cmd'), 'ms')],
+          ['Read lat', formatMetric(diskValue(row, 'LAT/rd'), 'ms')],
+          ['Write lat', formatMetric(diskValue(row, 'LAT/wr'), 'ms')],
+          ['QUED', formatMetric(diskValue(row, 'QUED'), '')],
+          ['ACTV', formatMetric(diskValue(row, 'ACTV'), '')],
+          ['Aborts max', formatMetric(diskValue(row, 'ABRTS/s', 'max'), '/s')],
+          ['Resets max', formatMetric(diskValue(row, 'RESETS/s', 'max'), '/s')],
+        ],
+      }));
     }
   }
   if (!summaryRows.length) {
     return '<div class="report-empty">No Virtual Disk counters were captured for the detected VMs.</div>';
   }
   return `<h3>VM storage detail</h3>
-    <p class="report-note">P95 over the capture window. The summary selects the virtual disk with the highest GAVG (then highest IOPS) per VM; the per-disk table lists every captured virtual disk. <code>—</code> means the counter was not present in the capture.</p>
-    <h4>Worst virtual disk per VM</h4>
-    <table class="report-table report-wide">
-      <thead><tr><th>Virtual machine</th><th class="num">vDisks</th><th class="num">IOPS</th><th class="num">Read/s</th><th class="num">Write/s</th><th class="num">MB Read/s</th><th class="num">MB Write/s</th><th class="num">GAVG</th><th class="num">DAVG</th><th class="num">KAVG</th><th class="num">QAVG</th><th class="num">QUED</th><th>Status</th></tr></thead>
+    <p class="report-note">P95 over the capture window. The quick-scan table selects the virtual disk with the highest GAVG (then highest IOPS) per VM. The cards below show every captured virtual disk and all storage latency, queue, throughput and error values. <code>—</code> means the counter was not captured.</p>
+    <h4>Quick scan: worst virtual disk per VM</h4>
+    <div class="report-table-wrap"><table class="report-table">
+      <thead><tr><th>Virtual machine</th><th class="num">vDisks</th><th class="num">IOPS</th><th class="num">MB Read/s</th><th class="num">MB Write/s</th><th class="num">GAVG</th><th class="num">DAVG</th><th class="num">KAVG</th><th>Status</th></tr></thead>
       <tbody>${summaryRows.join('')}</tbody>
-    </table>
-    <h4>Per-virtual-disk detail</h4>
-    <table class="report-table report-wide">
-      <thead><tr><th>Virtual machine</th><th>Disk</th><th class="num">IOPS</th><th class="num">Read/s</th><th class="num">Write/s</th><th class="num">MB Read/s</th><th class="num">MB Write/s</th><th class="num">GAVG</th><th class="num">DAVG</th><th class="num">KAVG</th><th class="num">QAVG</th><th class="num">QUED</th><th class="num">ACTV</th><th class="num">Aborts max</th><th class="num">Resets max</th><th>Status</th></tr></thead>
-      <tbody>${diskRows.join('')}</tbody>
-    </table>`;
+    </table></div>
+    <h4>Per-virtual-disk latency and I/O</h4>
+    <div class="report-card-grid">${diskCards.join('')}</div>`;
 }
 
 function reportVmMemoryNetwork(doc) {
   const names = doc.vms || [];
   if (!names.length) return '<div class="report-empty">No VM groups were detected.</div>';
-  const rows = names.map((name) => {
+  const cards = names.map((name) => {
     const vm = vmSummary(doc, name);
-    return `<tr>
-      <td><strong>${esc(name)}</strong></td>
-      <td class="num">${formatMetric(vm.configuredMemory, 'MB')}</td>
-      <td class="num">${formatMetric(vm.grantedMemory, 'MB')}</td>
-      <td class="num">${formatMetric(vm.balloon?.stats?.p95, 'MB')}</td>
-      <td class="num">${formatMetric(vm.swap?.stats?.p95, 'MB')}</td>
-      <td class="num">${formatMetric(vm.swapIn?.stats?.p95, 'MB/s')}</td>
-      <td class="num">${formatMetric(vm.swapOut?.stats?.p95, 'MB/s')}</td>
-      <td class="num">${formatMetric(vm.swapWait?.stats?.p95, '%')}</td>
-      <td class="num">${formatMetric(vm.numa?.stats?.p05, '%')}</td>
-      <td class="num">${formatMetric(vm.txDrop?.stats?.p95, '%')}</td>
-      <td class="num">${formatMetric(vm.rxDrop?.stats?.p95, '%')}</td>
-      <td class="num">${formatMetric(vm.mbTx?.stats?.p95, 'Mbps')}</td>
-      <td class="num">${formatMetric(vm.mbRx?.stats?.p95, 'Mbps')}</td>
-      <td>${badgeFor(vm.status)}</td>
-    </tr>`;
+    return reportEntityCard({
+      title: name,
+      subtitle: `${vm.vcpus ?? '—'} vCPU · ${formatMetric(vm.configuredMemory, 'MB')} configured`,
+      status: vm.status,
+      metrics: [
+        ['Memory size', formatMetric(vm.configuredMemory, 'MB')],
+        ['Granted', formatMetric(vm.grantedMemory, 'MB')],
+        ['Balloon', formatMetric(vm.balloon?.stats?.p95, 'MB')],
+        ['Swap', formatMetric(vm.swap?.stats?.p95, 'MB')],
+        ['Swap in', formatMetric(vm.swapIn?.stats?.p95, 'MB/s')],
+        ['Swap out', formatMetric(vm.swapOut?.stats?.p95, 'MB/s')],
+        ['Swap wait', formatMetric(vm.swapWait?.stats?.p95, '%')],
+        ['N%L P05', formatMetric(vm.numa?.stats?.p05, '%')],
+        ['TX drop', formatMetric(vm.txDrop?.stats?.p95, '%')],
+        ['RX drop', formatMetric(vm.rxDrop?.stats?.p95, '%')],
+        ['TX Mbps', formatMetric(vm.mbTx?.stats?.p95, 'Mbps')],
+        ['RX Mbps', formatMetric(vm.mbRx?.stats?.p95, 'Mbps')],
+      ],
+    });
   }).join('');
   return `<h3>VM memory and network detail</h3>
-    <p class="report-note">P95 for reclaim and network rates; <code>N%L</code> shows P05 because lower locality is worse. <code>Swap wait</code> is the vCPU swap-wait percentage. <code>—</code> means the counter was not captured.</p>
-    <table class="report-table report-wide">
-      <thead><tr><th>Virtual machine</th><th class="num">Memory size</th><th class="num">Granted</th><th class="num">Balloon</th><th class="num">Swap</th><th class="num">Swap in</th><th class="num">Swap out</th><th class="num">Swap wait</th><th class="num">N%L P05</th><th class="num">TX drop</th><th class="num">RX drop</th><th class="num">TX Mbps</th><th class="num">RX Mbps</th><th>Status</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+    <p class="report-note">P95 for reclaim and network values; <code>N%L</code> shows P05 because lower locality is worse. <code>Swap wait</code> is the vCPU swap-wait percentage. <code>—</code> means the counter was not captured.</p>
+    <div class="report-card-grid">${cards}</div>`;
 }
 
 function reportCategories(doc) {
@@ -539,6 +680,10 @@ export function reportBody(doc) {
       <h2>Summary</h2>
       <p>${esc(summary.headline || 'Capture loaded.')}</p>
       ${summary.scoreBasis ? `<p class="report-note">${esc(summary.scoreBasis)}</p>` : ''}
+    </section>
+    <section class="report-section">
+      <h2>Host snapshot</h2>
+      ${reportHost(doc)}
     </section>
     <section class="report-section">
       <h2>What to do next</h2>

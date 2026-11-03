@@ -66,9 +66,9 @@ def main() -> int:
         FAILURES.append(f"public/version.json is not valid JSON: {exc}")
     check(bool(version.get("version")), "public/version.json must contain a version")
     check(version.get("version") != "0.0.0", "version must not be a placeholder")
-    check("1.4.0" in (ROOT / "esxtop_perf/catalog.py").read_text(encoding="utf-8"), "APP_VERSION is not 1.4.0")
+    check("1.4.1" in (ROOT / "esxtop_perf/catalog.py").read_text(encoding="utf-8"), "APP_VERSION is not 1.4.1")
     package = (ROOT / "esxtop_perf/catalog.py").read_text(encoding="utf-8")
-    check('APP_VERSION = "1.4.0"' in package, "catalog APP_VERSION must match public/version.json")
+    check('APP_VERSION = "1.4.1"' in package, "catalog APP_VERSION must match public/version.json")
 
     index = (ROOT / "public/index.html").read_text(encoding="utf-8")
     check("/assets/css/app.css" in index, "index.html does not load the stylesheet")
@@ -148,8 +148,8 @@ def main() -> int:
         check(marker in app_js, f"app.js missing route/feature marker: {marker}")
 
     report_js = (ROOT / "public/assets/js/report.js").read_text(encoding="utf-8")
-    for marker in ("VM storage detail", "Per-virtual-disk detail", "VM memory and network detail", "reportVmStorage(doc)", "reportVmMemoryNetwork(doc)", "DAVG", "QUED", "Aborts max"):
-        check(marker in report_js, f"report.js missing VM detail marker: {marker}")
+    for marker in ("VM storage detail", "Per-virtual-disk latency and I/O", "VM memory and network detail", "reportVmStorage(doc)", "reportVmMemoryNetwork(doc)", "DAVG", "QUED", "Aborts max", "Host snapshot", "Host disk adapters and devices", "reportHost(doc)", "reportHostStorageRows(doc)", "report-card-grid", "report-entity-card"):
+        check(marker in report_js, f"report.js missing report detail marker: {marker}")
 
     pages_js = (ROOT / "public/assets/js/pages.js").read_text(encoding="utf-8")
     for marker in ("Storage bundle: Adapter + Device + VM Disk", "There is no separate Datastore panel in esxtop", "Real file · ESXi 8.0 U3", "Anatomy of a real <code>.esxtop60rc</code>", "ABCDEfGHIJkl", "Large sample count?", "Sizing large captures", "Capture report", "Export HTML", "Export PDF", "reportBody(doc)", "Technical vocabulary", "Technical detail", "How these counters fit together", "Support workflow", "Internal ESXi system worlds", "What <code>c</code>, <code>m</code>, <code>n</code>, <code>i</code> and <code>p</code> contain", "panel-reference-grid", "Storage-only sequence"):
