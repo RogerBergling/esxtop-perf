@@ -214,25 +214,57 @@ export function vmSummary(document, name) {
   const ready = pick('%RDY');
   const mlmtd = pick('%MLMTD');
   const cstop = pick('%CSTP');
+  const cpuSys = pick('%SYS');
+  const cpuWait = pick('%WAIT');
+  const swapWait = pick('%SWPWT');
   const balloon = pick('MCTLSZ');
   const swap = pick('SWCUR');
   const swapIn = pick('SWR/s');
   const swapOut = pick('SWW/s');
   const numa = pick('N%L', 'p05', 'min');
+  const active = pick('%ACTV');
   const disk = pick('GAVG/cmd');
+  const davg = pick('DAVG/cmd');
+  const kavg = pick('KAVG/cmd');
+  const qavg = pick('QAVG/cmd');
+  const qued = pick('QUED');
+  const activeCommands = pick('ACTV');
+  const iops = pick('CMDS/s');
+  const reads = pick('READS/s');
+  const writes = pick('WRITES/s');
+  const mbRead = pick('MBREAD/s');
+  const mbWrite = pick('MBWRTN/s');
+  const readLatency = pick('LAT/rd');
+  const writeLatency = pick('LAT/wr');
+  const aborts = pick('ABRTS/s');
+  const resets = pick('RESETS/s');
   const drop = pick('%DRPTX', 'p95', 'max') || pick('%DRPRX');
+  const txDrop = pick('%DRPTX');
+  const rxDrop = pick('%DRPRX');
+  const mbTx = pick('MbTX/s');
+  const mbRx = pick('MbRX/s');
   const configured = pick('MEMSZ', 'last');
+  const granted = pick('GRANT', 'last');
+  const consumed = pick('CNSM', 'last');
   const members = pick('Members', 'last');
   const vcpuSeries = list.filter((series) => series.group?.toLowerCase().startsWith('vcpu') && series.metric === '%USED');
   const worlds = new Set(vcpuSeries.map((series) => series.world || series.instance));
+  const diskSeries = list.filter((series) => series.group?.toLowerCase().startsWith('virtual disk'));
+  const vdisks = new Set(diskSeries.map((series) => series.instance || series.entity)).size;
   const status = worstStatus(list.map((series) => series.status));
   const findings = (document.findings || []).filter((finding) => finding.entity === name);
   return {
     name, list, numeric, status, findings,
     cpuUsed: groupCpu || vcpuUsed,
-    ready, mlmtd, cstop, balloon, swap, swapIn, swapOut, numa, disk, drop,
+    ready, mlmtd, cstop, cpuSys, cpuWait, swapWait,
+    balloon, swap, swapIn, swapOut, numa, active,
+    disk, davg, kavg, qavg, qued, activeCommands, iops, reads, writes, mbRead, mbWrite,
+    readLatency, writeLatency, aborts, resets, drop, txDrop, rxDrop, mbTx, mbRx,
     configuredMemory: configured?.stats?.last ?? null,
+    grantedMemory: granted?.stats?.last ?? null,
+    consumedMemory: consumed?.stats?.last ?? null,
     vcpus: worlds.size || (members?.stats?.last ?? null),
+    vdisks,
     seriesCount: list.length,
   };
 }

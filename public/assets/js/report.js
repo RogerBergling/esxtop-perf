@@ -66,6 +66,9 @@ const REPORT_CSS = `
 .capture-report .report-table th { color: var(--rp-muted); font-size: .66rem; letter-spacing: .06em; text-transform: uppercase; background: var(--rp-panel); }
 .capture-report .report-table td.num, .capture-report .report-table th.num { text-align: right; white-space: nowrap; }
 .capture-report .report-table tr:last-child td { border-bottom: 0; }
+.capture-report .report-table.report-wide { font-size: .7rem; }
+.capture-report .report-table.report-wide th, .capture-report .report-table.report-wide td { padding: .34rem .35rem; white-space: nowrap; }
+.capture-report h4 { font-size: .82rem; margin: 1rem 0 .35rem; }
 .capture-report .report-finding { border: 1px solid var(--rp-line); border-left: 4px solid var(--rp-muted); border-radius: 8px; background: #fff; padding: .7rem .8rem; margin: .55rem 0; break-inside: avoid; }
 .capture-report .report-finding.critical { border-left-color: var(--rp-critical); }
 .capture-report .report-finding.warning, .capture-report .report-finding.warn { border-left-color: var(--rp-warn); }
@@ -118,6 +121,7 @@ const REPORT_CSS = `
 @page { size: A4; margin: 12mm; }
 @media print {
   .report-print-bar, .report-toolbar, .topbar, .capture-bar, .footer, .category-tabs { display: none !important; }
+  .capture-report .report-table.report-wide { font-size: 6.5pt; }
   .report-standalone { background: #fff; }
   .report-standalone .capture-report, .capture-report { max-width: none; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; }
   .capture-report h2 { break-after: avoid; }
@@ -307,6 +311,136 @@ function reportVms(doc) {
     </table>`;
 }
 
+function diskRowsForVm(vm) {
+  const groups = new Map();
+  for (const series of vm.list) {
+    if (!series.group?.toLowerCase().startsWith('virtual disk')) continue;
+    const key = series.instance || series.entity || 'virtual disk';
+    let row = groups.get(key);
+    if (!row) {
+      row = { key, series: {} };
+      groups.set(key, row);
+    }
+    if (!row.series[series.metric] || (Number(series.stats?.p95) || 0) > (Number(row.series[series.metric]?.stats?.p95) || 0)) {
+      row.series[series.metric] = series;
+    }
+  }
+  const rows = [...groups.values()];
+  const childDisks = rows.filter((row) => /:scsi\d+:\d+$/.test(row.key));
+  return childDisks.length ? childDisks : rows;
+}
+
+function diskValue(row, metric, field = 'p95') {
+  return row?.series?.[metric]?.stats?.[field] ?? null;
+}
+
+function diskLabel(instance) {
+  const value = String(instance || 'virtual disk');
+  const match = value.match(/(:scsi\d+:\d+)$/);
+  if (match) return match[1].slice(1);
+  const withoutUuid = value.replace(/^.*?\)/, '').replace(/^:/, '').trim();
+  return withoutUuid || 'virtual disk total';
+}
+
+function diskStatus(row) {
+  return worstStatus(Object.values(row.series).map((series) => series.status));
+}
+
+function reportVmStorage(doc) {
+  const names = doc.vms || [];
+  const summaryRows = [];
+  const diskRows = [];
+  for (const name of names) {
+    const vm = vmSummary(doc, name);
+    const rows = diskRowsForVm(vm);
+    if (!rows.length) continue;
+    const worst = [...rows].sort((left, right) => (
+      (Number(diskValue(right, 'GAVG/cmd')) || 0) - (Number(diskValue(left, 'GAVG/cmd')) || 0) ||
+      (Number(diskValue(right, 'CMDS/s')) || 0) - (Number(diskValue(left, 'CMDS/s')) || 0)
+    ))[0];
+    summaryRows.push(`<tr>
+      <td><strong>${esc(name)}</strong></td>
+      <td class="num">${rows.length}</td>
+      <td class="num">${formatMetric(diskValue(worst, 'CMDS/s'), '/s')}</td>
+      <td class="num">${formatMetric(diskValue(worst, 'READS/s'), '/s')}</td>
+      <td class="num">${formatMetric(diskValue(worst, 'WRITES/s'), '/s')}</td>
+      <td class="num">${formatMetric(diskValue(worst, 'MBREAD/s'), 'MB/s')}</td>
+      <td class="num">${formatMetric(diskValue(worst, 'MBWRTN/s'), 'MB/s')}</td>
+      <td class="num">${formatMetric(diskValue(worst, 'GAVG/cmd'), 'ms')}</td>
+      <td class="num">${formatMetric(diskValue(worst, 'DAVG/cmd'), 'ms')}</td>
+      <td class="num">${formatMetric(diskValue(worst, 'KAVG/cmd'), 'ms')}</td>
+      <td class="num">${formatMetric(diskValue(worst, 'QAVG/cmd'), 'ms')}</td>
+      <td class="num">${formatMetric(diskValue(worst, 'QUED'), '')}</td>
+      <td>${badgeFor(diskStatus(worst))}</td>
+    </tr>`);
+    for (const row of rows) {
+      diskRows.push(`<tr>
+        <td>${esc(name)}</td>
+        <td class="mono">${esc(diskLabel(row.key))}</td>
+        <td class="num">${formatMetric(diskValue(row, 'CMDS/s'), '/s')}</td>
+        <td class="num">${formatMetric(diskValue(row, 'READS/s'), '/s')}</td>
+        <td class="num">${formatMetric(diskValue(row, 'WRITES/s'), '/s')}</td>
+        <td class="num">${formatMetric(diskValue(row, 'MBREAD/s'), 'MB/s')}</td>
+        <td class="num">${formatMetric(diskValue(row, 'MBWRTN/s'), 'MB/s')}</td>
+        <td class="num">${formatMetric(diskValue(row, 'GAVG/cmd'), 'ms')}</td>
+        <td class="num">${formatMetric(diskValue(row, 'DAVG/cmd'), 'ms')}</td>
+        <td class="num">${formatMetric(diskValue(row, 'KAVG/cmd'), 'ms')}</td>
+        <td class="num">${formatMetric(diskValue(row, 'QAVG/cmd'), 'ms')}</td>
+        <td class="num">${formatMetric(diskValue(row, 'QUED'), '')}</td>
+        <td class="num">${formatMetric(diskValue(row, 'ACTV'), '')}</td>
+        <td class="num">${formatMetric(diskValue(row, 'ABRTS/s', 'max'), '/s')}</td>
+        <td class="num">${formatMetric(diskValue(row, 'RESETS/s', 'max'), '/s')}</td>
+        <td>${badgeFor(diskStatus(row))}</td>
+      </tr>`);
+    }
+  }
+  if (!summaryRows.length) {
+    return '<div class="report-empty">No Virtual Disk counters were captured for the detected VMs.</div>';
+  }
+  return `<h3>VM storage detail</h3>
+    <p class="report-note">P95 over the capture window. The summary selects the virtual disk with the highest GAVG (then highest IOPS) per VM; the per-disk table lists every captured virtual disk. <code>—</code> means the counter was not present in the capture.</p>
+    <h4>Worst virtual disk per VM</h4>
+    <table class="report-table report-wide">
+      <thead><tr><th>Virtual machine</th><th class="num">vDisks</th><th class="num">IOPS</th><th class="num">Read/s</th><th class="num">Write/s</th><th class="num">MB Read/s</th><th class="num">MB Write/s</th><th class="num">GAVG</th><th class="num">DAVG</th><th class="num">KAVG</th><th class="num">QAVG</th><th class="num">QUED</th><th>Status</th></tr></thead>
+      <tbody>${summaryRows.join('')}</tbody>
+    </table>
+    <h4>Per-virtual-disk detail</h4>
+    <table class="report-table report-wide">
+      <thead><tr><th>Virtual machine</th><th>Disk</th><th class="num">IOPS</th><th class="num">Read/s</th><th class="num">Write/s</th><th class="num">MB Read/s</th><th class="num">MB Write/s</th><th class="num">GAVG</th><th class="num">DAVG</th><th class="num">KAVG</th><th class="num">QAVG</th><th class="num">QUED</th><th class="num">ACTV</th><th class="num">Aborts max</th><th class="num">Resets max</th><th>Status</th></tr></thead>
+      <tbody>${diskRows.join('')}</tbody>
+    </table>`;
+}
+
+function reportVmMemoryNetwork(doc) {
+  const names = doc.vms || [];
+  if (!names.length) return '<div class="report-empty">No VM groups were detected.</div>';
+  const rows = names.map((name) => {
+    const vm = vmSummary(doc, name);
+    return `<tr>
+      <td><strong>${esc(name)}</strong></td>
+      <td class="num">${formatMetric(vm.configuredMemory, 'MB')}</td>
+      <td class="num">${formatMetric(vm.grantedMemory, 'MB')}</td>
+      <td class="num">${formatMetric(vm.balloon?.stats?.p95, 'MB')}</td>
+      <td class="num">${formatMetric(vm.swap?.stats?.p95, 'MB')}</td>
+      <td class="num">${formatMetric(vm.swapIn?.stats?.p95, 'MB/s')}</td>
+      <td class="num">${formatMetric(vm.swapOut?.stats?.p95, 'MB/s')}</td>
+      <td class="num">${formatMetric(vm.swapWait?.stats?.p95, '%')}</td>
+      <td class="num">${formatMetric(vm.numa?.stats?.p05, '%')}</td>
+      <td class="num">${formatMetric(vm.txDrop?.stats?.p95, '%')}</td>
+      <td class="num">${formatMetric(vm.rxDrop?.stats?.p95, '%')}</td>
+      <td class="num">${formatMetric(vm.mbTx?.stats?.p95, 'Mbps')}</td>
+      <td class="num">${formatMetric(vm.mbRx?.stats?.p95, 'Mbps')}</td>
+      <td>${badgeFor(vm.status)}</td>
+    </tr>`;
+  }).join('');
+  return `<h3>VM memory and network detail</h3>
+    <p class="report-note">P95 for reclaim and network rates; <code>N%L</code> shows P05 because lower locality is worse. <code>Swap wait</code> is the vCPU swap-wait percentage. <code>—</code> means the counter was not captured.</p>
+    <table class="report-table report-wide">
+      <thead><tr><th>Virtual machine</th><th class="num">Memory size</th><th class="num">Granted</th><th class="num">Balloon</th><th class="num">Swap</th><th class="num">Swap in</th><th class="num">Swap out</th><th class="num">Swap wait</th><th class="num">N%L P05</th><th class="num">TX drop</th><th class="num">RX drop</th><th class="num">TX Mbps</th><th class="num">RX Mbps</th><th>Status</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
 function reportCategories(doc) {
   const categories = doc.summary?.categories || {};
   const order = ['cpu', 'memory', 'storage', 'network', 'power', 'other'];
@@ -421,6 +555,8 @@ export function reportBody(doc) {
     <section class="report-section">
       <h2>Virtual machines</h2>
       ${reportVms(doc)}
+      ${reportVmStorage(doc)}
+      ${reportVmMemoryNetwork(doc)}
     </section>
     <section class="report-section">
       <h2>Categories</h2>
