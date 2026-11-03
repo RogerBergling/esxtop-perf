@@ -66,9 +66,9 @@ def main() -> int:
         FAILURES.append(f"public/version.json is not valid JSON: {exc}")
     check(bool(version.get("version")), "public/version.json must contain a version")
     check(version.get("version") != "0.0.0", "version must not be a placeholder")
-    check("1.4.1" in (ROOT / "esxtop_perf/catalog.py").read_text(encoding="utf-8"), "APP_VERSION is not 1.4.1")
+    check("1.6.0" in (ROOT / "esxtop_perf/catalog.py").read_text(encoding="utf-8"), "APP_VERSION is not 1.6.0")
     package = (ROOT / "esxtop_perf/catalog.py").read_text(encoding="utf-8")
-    check('APP_VERSION = "1.4.1"' in package, "catalog APP_VERSION must match public/version.json")
+    check('APP_VERSION = "1.6.0"' in package, "catalog APP_VERSION must match public/version.json")
 
     index = (ROOT / "public/index.html").read_text(encoding="utf-8")
     check("/assets/css/app.css" in index, "index.html does not load the stylesheet")
@@ -124,6 +124,7 @@ def main() -> int:
     check("## Reports" in readme, "README lacks the report documentation")
     check("## Reports" in readme and "What to do next" in readme, "README lacks the report action-plan documentation")
     check("ghcr.io/rogerbergling/esxtop-perf" in readme, "README does not name the GHCR image")
+    check("### Report scope" in readme, "README lacks report host/VM scope documentation")
 
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     check("USER app" in dockerfile, "Dockerfile must run as an unprivileged user")
@@ -147,14 +148,26 @@ def main() -> int:
     for marker in ("#/guide", "#/capture", "#/metrics", "#/insights", "#/report", "renderOverview", "renderCapture", "renderReport", "uploadFile", "ensureSeries", "/api/series"):
         check(marker in app_js, f"app.js missing route/feature marker: {marker}")
 
+    parser_py = (ROOT / "esxtop_perf/parser.py").read_text(encoding="utf-8")
+    check('"hosts": hosts' in parser_py, "parser must expose all capture hosts")
+    check('"hostCount": len(hosts)' in parser_py, "parser must expose hostCount")
+    analysis_py = (ROOT / "esxtop_perf/analysis.py").read_text(encoding="utf-8")
+    check('"host": item.get("host", "")' in analysis_py, "findings must retain the ESXi host")
+
     report_js = (ROOT / "public/assets/js/report.js").read_text(encoding="utf-8")
-    for marker in ("VM storage detail", "Per-virtual-disk latency and I/O", "VM memory and network detail", "reportVmStorage(doc)", "reportVmMemoryNetwork(doc)", "DAVG", "QUED", "Aborts max", "Host snapshot", "Host disk adapters and devices", "reportHost(doc)", "reportHostStorageRows(doc)", "report-card-grid", "report-entity-card"):
+    for marker in ("VM storage detail", "Per-virtual-disk latency and I/O", "VM memory and network detail", "reportVmStorage(doc", "reportVmMemoryNetwork(doc", "DAVG", "QUED", "Aborts max", "Host snapshot", "Host disk adapters and devices", "reportHost(doc", "reportHostStorageRows(doc", "report-card-grid", "report-entity-card", "Complete metric appendix", "reportMetricAppendix(doc)", "Every captured series", "reportHostNames(doc)", "reportVmNames(doc", "reportBody(doc, scope = {})"):
         check(marker in report_js, f"report.js missing report detail marker: {marker}")
 
     pages_js = (ROOT / "public/assets/js/pages.js").read_text(encoding="utf-8")
-    for marker in ("Storage bundle: Adapter + Device + VM Disk", "There is no separate Datastore panel in esxtop", "Real file · ESXi 8.0 U3", "Anatomy of a real <code>.esxtop60rc</code>", "ABCDEfGHIJkl", "Large sample count?", "Sizing large captures", "Capture report", "Export HTML", "Export PDF", "reportBody(doc)", "Technical vocabulary", "Technical detail", "How these counters fit together", "Support workflow", "Internal ESXi system worlds", "What <code>c</code>, <code>m</code>, <code>n</code>, <code>i</code> and <code>p</code> contain", "panel-reference-grid", "Storage-only sequence"):
+    for marker in ("Storage bundle: Adapter + Device + VM Disk", "There is no separate Datastore panel in esxtop", "Real file · ESXi 8.0 U3", "Anatomy of a real <code>.esxtop60rc</code>", "ABCDEfGHIJkl", "Large sample count?", "Sizing large captures", "Capture report", "Export HTML", "Export PDF", "Export all metrics CSV", "report-metrics-csv", "reportBody(doc, { host: initialHost, vms: [] })", "report-host", "report-vms", "report-clear-vms", "report-scope-card", "Technical vocabulary", "Technical detail", "How these counters fit together", "Support workflow", "Internal ESXi system worlds", "What <code>c</code>, <code>m</code>, <code>n</code>, <code>i</code> and <code>p</code> contain", "panel-reference-grid", "Storage-only sequence"):
         check(marker in pages_js, f"Capture page missing multi-panel marker: {marker}")
     check("Real file · ESXi 6.0" not in pages_js, "Capture page must not label the ESXi 8.0 U3 rc as ESXi 6.0")
+
+    parser_py = (ROOT / "esxtop_perf/parser.py").read_text(encoding="utf-8")
+    check('"hosts": hosts' in parser_py, "parser must expose all capture hosts")
+    check('"hostCount": len(hosts)' in parser_py, "parser must expose hostCount")
+    analysis_py = (ROOT / "esxtop_perf/analysis.py").read_text(encoding="utf-8")
+    check('"host": item.get("host", "")' in analysis_py, "findings must retain the ESXi host")
 
     report_js = (ROOT / "public/assets/js/report.js").read_text(encoding="utf-8")
     for marker in ("downloadReportHTML", "openReportPrintWindow", "reportBody", "reportStyles", "Save as PDF", "Internal ESXi system worlds", "What to do next", "Technical reference", "Decision guide", "Change control", "KAVG", "DAVG", "GAVG"):

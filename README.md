@@ -93,7 +93,7 @@ The launcher serves the app on the first free port in **8080–8099** unless `--
 
 ```bash
 docker build \
-  --build-arg APP_VERSION=1.4.1 \
+  --build-arg APP_VERSION=1.6.0 \
   --build-arg IMAGE_TAG=local \
   --build-arg GIT_SHA="$(git rev-parse --short HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -235,6 +235,15 @@ The other panels are part of the rc file even when you only care about storage. 
 | `i` | Interrupts | Per-CPU interrupt activity and vector data. | Clear all unless investigating a driver, NIC or HBA interrupt storm. |
 | `p` | CPU Power | Power state, CPU frequency, `%A/MPERF` and power data. | Clear all for normal storage captures. |
 
+### Report scope
+
+The **Report** page includes a scope selector for the detailed sections:
+
+- **ESXi host** — choose the host whose host snapshot and disk adapter/device cards you want. Multi-host captures are detected from the host names in the PDH-CSV counter paths.
+- **VMs** — choose no VM (all VMs on that host), one VM, or multiple VMs using Ctrl/Cmd-click.
+
+The scoped detail includes the host snapshot, host disk cards, VM summary, per-virtual-disk storage latency/I/O, and VM memory/network cards. The executive summary, findings, category overview and complete metric appendix remain capture-wide. Exported HTML and PDF use the currently selected host/VM scope.
+
 The app includes a step-by-step **Capture** page and command builder at `#/capture`. A detailed version is also in the [field guide](public/docs/esxtop-field-guide.md#focused-capture-with--c).
 
 Read the [field guide](public/docs/esxtop-field-guide.md) for the world/group model, every important CPU/memory/storage/network counter, the GAVG = DAVG + KAVG rule, practical threshold rationale and troubleshooting playbooks.
@@ -258,7 +267,7 @@ The **signal score** is the percentage of rule-evaluated series currently inside
 
 Open **Report** from the overview or the `#/report` route. **Export HTML** downloads a standalone, self-contained report. **Export PDF** opens the browser print dialog; choose **Save as PDF** and keep A4.
 
-The report contains the executive summary, a prioritized **What to do next** action plan derived from the findings, the findings themselves, a **Host snapshot** with CPU, memory, host disk-latency and network stats, **Host disk adapter/device cards** with all captured latency, queue, throughput and error values, a **VM summary**, **VM storage detail** with per-virtual-disk IOPS/throughput/GAVG/DAVG/KAVG/QAVG/QUED/ACTV/aborts/resets, **VM memory and network cards**, and a **Technical reference** that explains the counters behind them — including KAVG, DAVG, GAVG, QAVG, `%RDY`, `%MLMTD`, `%CSTP`, ballooning, swap, NUMA locality and storage queue behaviour. The same technical notes appear on metric pages, finding cards, category pages and VM drilldowns.
+The report contains the executive summary, a prioritized **What to do next** action plan derived from the findings, the findings themselves, a **Host snapshot** with CPU, memory, host disk-latency and network stats, **Host disk adapter/device cards** with all captured latency, queue, throughput and error values, a **VM summary**, **VM storage detail** with per-virtual-disk IOPS/throughput/GAVG/DAVG/KAVG/QAVG/QUED/ACTV/aborts/resets, **VM memory and network cards**, a **Technical reference** that explains the counters behind them — including KAVG, DAVG, GAVG, QAVG, `%RDY`, `%MLMTD`, `%CSTP`, ballooning, swap, NUMA locality and storage queue behaviour — and a **complete metric appendix** containing every captured series with Min/Avg/P95/Max/Last/status. The report toolbar also exports **all metrics as CSV**. The same technical notes appear on metric pages, finding cards, category pages and VM drilldowns.
 
 ## Input and session limits
 
@@ -367,7 +376,7 @@ ghcr.io/rogerbergling/esxtop-perf
 | --- | --- |
 | Push to `main` | `latest`, `main`, `sha-<short>` |
 | Push to another branch | `<branch>`, `sha-<short>` |
-| Tag `v1.4.1` | `v1.4.1`, `sha-<short>` |
+| Tag `v1.6.0` | `v1.6.0`, `sha-<short>` |
 | Manual run | Tags for the selected ref |
 
 No repository secrets are required; the workflow uses `GITHUB_TOKEN`. A new GHCR package is private by default. Make it public once, or authenticate the host with `read:packages`.

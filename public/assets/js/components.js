@@ -193,12 +193,15 @@ export function activeFindings(document, severity = null) {
   return (document?.findings || []).filter((finding) => !severity || finding.severity === severity);
 }
 
-export function vmSeries(document, vmName) {
-  return (document?.series || []).filter((series) => series.vm === vmName || series.entity === vmName);
+export function vmSeries(document, vmName, host = null) {
+  return (document?.series || []).filter((series) => (
+    (series.vm === vmName || series.entity === vmName) &&
+    (!host || series.host === host)
+  ));
 }
 
-export function vmSummary(document, name) {
-  const list = vmSeries(document, name);
+export function vmSummary(document, name, host = null) {
+  const list = vmSeries(document, name, host);
   const numeric = list.filter((series) => series.kind === 'numeric');
   const pick = (metric, field = 'p95', mode = 'max') => {
     const candidates = numeric.filter((series) => series.metric === metric && series.stats?.count);
@@ -252,7 +255,9 @@ export function vmSummary(document, name) {
   const diskSeries = list.filter((series) => series.group?.toLowerCase().startsWith('virtual disk'));
   const vdisks = new Set(diskSeries.map((series) => series.instance || series.entity)).size;
   const status = worstStatus(list.map((series) => series.status));
-  const findings = (document.findings || []).filter((finding) => finding.entity === name);
+  const findings = (document.findings || []).filter((finding) => (
+    finding.entity === name && (!host || !finding.host || finding.host === host)
+  ));
   return {
     name, list, numeric, status, findings,
     cpuUsed: groupCpu || vcpuUsed,
@@ -269,8 +274,10 @@ export function vmSummary(document, name) {
   };
 }
 
-export function vmFindings(document, vmName) {
-  return (document?.findings || []).filter((finding) => finding.entity === vmName);
+export function vmFindings(document, vmName, host = null) {
+  return (document?.findings || []).filter((finding) => (
+    finding.entity === vmName && (!host || !finding.host || finding.host === host)
+  ));
 }
 
 export function worstSeriesForMetric(seriesList) {

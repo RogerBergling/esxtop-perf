@@ -69,6 +69,10 @@ const REPORT_CSS = `
 .capture-report h4 { font-size: .82rem; margin: 1rem 0 .35rem; }
 .capture-report .report-table-wrap { width: 100%; max-width: 100%; overflow-x: auto; margin: .5rem 0 1rem; }
 .capture-report .report-table-wrap .report-table { margin: 0; }
+.capture-report .report-metric-id { display: block; color: var(--rp-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .64rem; margin-top: .1rem; overflow-wrap: anywhere; }
+.capture-report .report-appendix-section { margin-top: 1.1rem; }
+.capture-report .report-appendix-table { font-size: .68rem; }
+.capture-report .report-appendix-table th, .capture-report .report-appendix-table td { padding: .34rem .35rem; }
 .capture-report .report-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; margin: .5rem 0 1rem; }
 .capture-report .report-entity-card { border: 1px solid var(--rp-line); border-radius: 9px; background: #fff; padding: .6rem .7rem; break-inside: avoid; min-width: 0; }
 .capture-report .report-entity-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .4rem; margin-bottom: .45rem; }
@@ -310,18 +314,19 @@ function reportEntityCard({ title, subtitle, status, metrics }) {
   </article>`;
 }
 
-function reportHostSeries(doc, metric, predicate = () => true) {
+function reportHostSeries(doc, host, metric, predicate = () => true) {
   return (doc.series || []).filter((series) => (
     series.metric === metric &&
     series.scope === 'host' &&
+    (!host || series.host === host) &&
     series.kind === 'numeric' &&
     series.stats?.count &&
     predicate(series)
   ));
 }
 
-function reportHostPick(doc, metric, predicate = () => true, field = 'p95', mode = 'max') {
-  const candidates = reportHostSeries(doc, metric, predicate);
+function reportHostPick(doc, host, metric, predicate = () => true, field = 'p95', mode = 'max') {
+  const candidates = reportHostSeries(doc, host, metric, predicate);
   if (!candidates.length) return null;
   return candidates.sort((left, right) => (
     mode === 'min'
@@ -330,10 +335,10 @@ function reportHostPick(doc, metric, predicate = () => true, field = 'p95', mode
   ))[0];
 }
 
-function reportHostStorageRows(doc) {
+function reportHostStorageRows(doc, host) {
   const map = new Map();
   for (const series of doc.series || []) {
-    if (series.scope !== 'host' || series.category !== 'storage' || series.kind !== 'numeric') continue;
+    if (series.scope !== 'host' || series.category !== 'storage' || series.kind !== 'numeric' || (host && series.host !== host)) continue;
     const key = `${series.group}|${series.instance || series.entity}`;
     let row = map.get(key);
     if (!row) {
@@ -357,26 +362,26 @@ function hostStorageValue(row, metric, field = 'p95') {
   return row?.series?.[metric]?.stats?.[field] ?? null;
 }
 
-function reportHost(doc) {
-  const cpuTotal = reportHostPick(doc, 'PCPU %', (series) => series.instance === '_Total')
-    || reportHostPick(doc, 'PCPU_UTIL', (series) => series.instance === '_Total')
-    || reportHostPick(doc, 'PCPU %')
-    || reportHostPick(doc, 'PCPU_UTIL');
-  const cpuCore = reportHostPick(doc, 'PCPU %', (series) => series.instance !== '_Total')
-    || reportHostPick(doc, 'CORE_UTIL', (series) => series.instance !== '_Total');
-  const load = reportHostPick(doc, 'LOAD1');
-  const free = reportHostPick(doc, 'FREE_MB', () => true, 'last');
-  const machine = reportHostPick(doc, 'MACHINE_MB', () => true, 'last');
-  const overcommit = reportHostPick(doc, 'OVERCOMMIT1');
-  const balloon = reportHostPick(doc, 'MEMCTL_CURRENT_MB');
-  const swap = reportHostPick(doc, 'SWAP_USED_MB');
-  const swapIn = reportHostPick(doc, 'SWAP_READ');
-  const swapOut = reportHostPick(doc, 'SWAP_WRITE');
-  const gavg = reportHostPick(doc, 'GAVG/cmd');
-  const qued = reportHostPick(doc, 'QUED');
+function reportHost(doc, host) {
+  const cpuTotal = reportHostPick(doc, host, 'PCPU %', (series) => series.instance === '_Total')
+    || reportHostPick(doc, host, 'PCPU_UTIL', (series) => series.instance === '_Total')
+    || reportHostPick(doc, host, 'PCPU %')
+    || reportHostPick(doc, host, 'PCPU_UTIL');
+  const cpuCore = reportHostPick(doc, host, 'PCPU %', (series) => series.instance !== '_Total')
+    || reportHostPick(doc, host, 'CORE_UTIL', (series) => series.instance !== '_Total');
+  const load = reportHostPick(doc, host, 'LOAD1');
+  const free = reportHostPick(doc, host, 'FREE_MB', () => true, 'last');
+  const machine = reportHostPick(doc, host, 'MACHINE_MB', () => true, 'last');
+  const overcommit = reportHostPick(doc, host, 'OVERCOMMIT1');
+  const balloon = reportHostPick(doc, host, 'MEMCTL_CURRENT_MB');
+  const swap = reportHostPick(doc, host, 'SWAP_USED_MB');
+  const swapIn = reportHostPick(doc, host, 'SWAP_READ');
+  const swapOut = reportHostPick(doc, host, 'SWAP_WRITE');
+  const gavg = reportHostPick(doc, host, 'GAVG/cmd');
+  const qued = reportHostPick(doc, host, 'QUED');
   const drops = [
-    reportHostPick(doc, '%DRPTX'),
-    reportHostPick(doc, '%DRPRX'),
+    reportHostPick(doc, host, '%DRPTX'),
+    reportHostPick(doc, host, '%DRPRX'),
   ].filter(Boolean).sort((left, right) => (Number(right.stats?.p95) || 0) - (Number(left.stats?.p95) || 0))[0] || null;
   const freePct = free?.stats?.last && machine?.stats?.last ? (free.stats.last / machine.stats.last) * 100 : null;
   const rows = [
@@ -392,7 +397,7 @@ function reportHost(doc) {
     ['Host storage QUED P95', formatMetric(qued?.stats?.p95, ''), qued?.status || 'neutral'],
     ['Host network drops P95', drops ? formatMetric(drops.stats?.p95, '%') : '—', drops?.status || 'neutral'],
   ];
-  const storageRows = reportHostStorageRows(doc);
+  const storageRows = reportHostStorageRows(doc, host);
   const hostTable = `<table class="report-table report-host-table">
     <thead><tr><th>Host signal</th><th class="num">Value</th><th>Status</th></tr></thead>
     <tbody>${rows.map(([label, value, status]) => `<tr><td>${esc(label)}</td><td class="num">${esc(value)}</td><td>${badgeFor(status)}</td></tr>`).join('')}</tbody>
@@ -421,18 +426,38 @@ function reportHost(doc) {
         ],
       })).join('')}
     </div>` : '';
-  return `<p class="report-note">Host counters are P95 over the capture window unless marked “last”. Latency is split into GAVG, DAVG and KAVG; the host storage cards below include every host-scope adapter/device captured.</p>
+  return `<p class="report-note">Scope: <strong>${esc(host || 'capture host')}</strong>. Host counters are P95 over the capture window unless marked “last”. Latency is split into GAVG, DAVG and KAVG; the host storage cards below include every host-scope adapter/device captured for this host.</p>
     ${hostTable}
     ${storageCards}`;
 }
 
-function reportVms(doc) {
-  const names = doc.vms || [];
+export function reportHostNames(doc) {
+  const fromMeta = Array.isArray(doc?.meta?.hosts) ? doc.meta.hosts.filter(Boolean) : [];
+  if (fromMeta.length) return fromMeta;
+  return [...new Set((doc?.series || []).map((series) => series.host).filter(Boolean))].sort();
+}
+
+export function reportVmNames(doc, host = null) {
+  return [...new Set((doc?.series || [])
+    .filter((series) => series.scope === 'vm' && series.vm && (!host || series.host === host))
+    .map((series) => series.vm))]
+    .sort((left, right) => String(left).localeCompare(String(right)));
+}
+
+function reportScopedVmNames(doc, host, selectedVms = []) {
+  const names = reportVmNames(doc, host);
+  if (!Array.isArray(selectedVms) || !selectedVms.length) return names;
+  const selected = new Set(selectedVms);
+  return names.filter((name) => selected.has(name));
+}
+
+function reportVms(doc, host = null, selectedVms = []) {
+  const names = reportScopedVmNames(doc, host, selectedVms);
   if (!names.length) {
-    return '<div class="report-empty">No VM groups were detected. ESXi system worlds are excluded from this table.</div>';
+    return '<div class="report-empty">No VM groups were detected for the selected host and scope. ESXi system worlds are excluded from this table.</div>';
   }
   const rows = names.map((name) => {
-    const vm = vmSummary(doc, name);
+    const vm = vmSummary(doc, name, host);
     const status = worstStatus([vm.status, ...vm.findings.map((finding) => finding.severity)]);
     return `<tr>
       <td><strong>${esc(vm.name)}</strong></td>
@@ -490,12 +515,12 @@ function diskStatus(row) {
   return worstStatus(Object.values(row.series).map((series) => series.status));
 }
 
-function reportVmStorage(doc) {
-  const names = doc.vms || [];
+function reportVmStorage(doc, host = null, selectedVms = []) {
+  const names = reportScopedVmNames(doc, host, selectedVms);
   const summaryRows = [];
   const diskCards = [];
   for (const name of names) {
-    const vm = vmSummary(doc, name);
+    const vm = vmSummary(doc, name, host);
     const rows = diskRowsForVm(vm);
     if (!rows.length) continue;
     const worst = [...rows].sort((left, right) => (
@@ -552,11 +577,11 @@ function reportVmStorage(doc) {
     <div class="report-card-grid">${diskCards.join('')}</div>`;
 }
 
-function reportVmMemoryNetwork(doc) {
-  const names = doc.vms || [];
-  if (!names.length) return '<div class="report-empty">No VM groups were detected.</div>';
+function reportVmMemoryNetwork(doc, host = null, selectedVms = []) {
+  const names = reportScopedVmNames(doc, host, selectedVms);
+  if (!names.length) return '<div class="report-empty">No VM groups were detected for the selected host and scope.</div>';
   const cards = names.map((name) => {
-    const vm = vmSummary(doc, name);
+    const vm = vmSummary(doc, name, host);
     return reportEntityCard({
       title: name,
       subtitle: `${vm.vcpus ?? '—'} vCPU · ${formatMetric(vm.configuredMemory, 'MB')} configured`,
@@ -580,6 +605,45 @@ function reportVmMemoryNetwork(doc) {
   return `<h3>VM memory and network detail</h3>
     <p class="report-note">P95 for reclaim and network values; <code>N%L</code> shows P05 because lower locality is worse. <code>Swap wait</code> is the vCPU swap-wait percentage. <code>—</code> means the counter was not captured.</p>
     <div class="report-card-grid">${cards}</div>`;
+}
+
+function reportMetricAppendix(doc) {
+  const series = (doc.series || []).filter((item) => item.stats);
+  const order = ['cpu', 'memory', 'storage', 'network', 'power', 'other'];
+  const sections = order.map((category) => {
+    const items = series
+      .filter((item) => item.category === category)
+      .sort((left, right) => (
+        String(left.group).localeCompare(String(right.group)) ||
+        String(left.metricName || left.metric).localeCompare(String(right.metricName || right.metric)) ||
+        String(left.instance || left.entity || '').localeCompare(String(right.instance || right.entity || ''))
+      ));
+    if (!items.length) return '';
+    return `<div class="report-appendix-section">
+      <h3>${esc(categoryLabel(category))} <span class="report-note">(${items.length} series)</span></h3>
+      <div class="report-table-wrap"><table class="report-table report-appendix-table">
+        <thead><tr><th>Metric</th><th>Entity</th><th class="num">Min</th><th class="num">Avg</th><th class="num">P95</th><th class="num">Max</th><th class="num">Last</th><th>Status</th></tr></thead>
+        <tbody>${items.map((item) => {
+          const definition = doc.metrics?.[item.metric] || {};
+          const name = definition.name || item.metricName || item.metric;
+          const entity = item.instance || item.entity || item.group || '—';
+          return `<tr>
+            <td><strong>${esc(name)}</strong><span class="report-metric-id">${esc(item.metric)}</span></td>
+            <td>${esc(item.group || '—')}${entity && entity !== item.group ? `<span class="report-metric-id">${esc(entity)}</span>` : ''}</td>
+            <td class="num">${formatMetric(item.stats?.min, item.unit)}</td>
+            <td class="num">${formatMetric(item.stats?.avg, item.unit)}</td>
+            <td class="num">${formatMetric(item.stats?.p95, item.unit)}</td>
+            <td class="num">${formatMetric(item.stats?.max, item.unit)}</td>
+            <td class="num">${formatMetric(item.stats?.last, item.unit)}</td>
+            <td>${badgeFor(item.status || 'neutral')}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>
+    </div>`;
+  }).join('');
+  return `<p class="report-note">Every captured series is included below, including host, VM, storage, network, power and system groups. Values are statistics over the capture window; raw sample arrays are not embedded in the report. Open the metric in ESXtop Lens for the complete time series or use <b>Export all metrics CSV</b>.</p>
+    <p class="report-note"><strong>${formatNumber(series.length, 0)} series.</strong> For very large captures this appendix can be very long.</p>
+    ${sections || '<div class="report-empty">No metric series are available.</div>'}`;
 }
 
 function reportCategories(doc) {
@@ -606,7 +670,8 @@ function reportCategories(doc) {
 function reportDetails(doc) {
   const meta = doc.meta || {};
   const rows = [
-    ['Host', meta.host || '—'],
+    ['Primary host', meta.host || '—'],
+    ['Hosts in capture', (meta.hosts || reportHostNames(doc)).join(', ') || '—'],
     ['Capture file', meta.filename || '—'],
     ['Capture start', meta.captureStart || '—'],
     ['Capture end', meta.captureEnd || '—'],
@@ -647,7 +712,7 @@ function reportMethod(doc) {
   </div>`;
 }
 
-export function reportBody(doc) {
+export function reportBody(doc, scope = {}) {
   const summary = doc.summary || {};
   const findings = doc.findings || [];
   const meta = doc.meta || {};
@@ -657,18 +722,23 @@ export function reportBody(doc) {
   const warning = summary.warning || 0;
   const info = summary.info || 0;
   const vms = (doc.vms || []).length;
+  const scopeHost = scope.host || meta.host || '';
+  const scopeVms = reportScopedVmNames(doc, scopeHost, scope.vms || []);
+  const hosts = reportHostNames(doc);
   const generated = new Date().toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
   return `<section class="capture-report">
     <div class="report-kicker">ESXtop Lens · capture report</div>
-    <h1>${esc(meta.host || 'ESXi host')}</h1>
+    <h1>${esc(scopeHost || 'ESXi host')}</h1>
     <p class="report-subtitle">${esc(meta.filename || 'capture')} · ${esc(meta.captureStart || '')} → ${esc(meta.captureEnd || '')}</p>
     <div class="report-status-row">
       ${badgeFor(status)}
       <span class="report-pill">${formatNumber(meta.sampleCount, 0)} samples</span>
       <span class="report-pill">${formatNumber(meta.columns, 0)} signals</span>
-      <span class="report-pill">${formatNumber(vms, 0)} VMs</span>
+      <span class="report-pill">${formatNumber(vms, 0)} VMs in capture</span>
+      ${hosts.length > 1 ? `<span class="report-pill">${hosts.length} hosts</span>` : ''}
       <span class="report-score">Signal score: ${score === null || score === undefined ? '—' : `${score}%`}</span>
     </div>
+    <p class="report-note">Detailed host and VM sections are scoped to <strong>${esc(scopeHost || 'the capture host')}</strong>${scopeVms.length ? ` and ${scopeVms.length === 1 ? 'VM' : 'VMs'} ${esc(scopeVms.join(', '))}` : ' and all VMs on that host'}. Executive summary, findings, categories and the complete metric appendix remain capture-wide.</p>
     <div class="report-summary">
       <div class="report-stat"><strong>${critical}</strong><span>Critical</span></div>
       <div class="report-stat"><strong>${warning}</strong><span>Warnings</span></div>
@@ -683,7 +753,7 @@ export function reportBody(doc) {
     </section>
     <section class="report-section">
       <h2>Host snapshot</h2>
-      ${reportHost(doc)}
+      ${reportHost(doc, scopeHost)}
     </section>
     <section class="report-section">
       <h2>What to do next</h2>
@@ -699,9 +769,9 @@ export function reportBody(doc) {
     </section>
     <section class="report-section">
       <h2>Virtual machines</h2>
-      ${reportVms(doc)}
-      ${reportVmStorage(doc)}
-      ${reportVmMemoryNetwork(doc)}
+      ${reportVms(doc, scopeHost, scope.vms || [])}
+      ${reportVmStorage(doc, scopeHost, scope.vms || [])}
+      ${reportVmMemoryNetwork(doc, scopeHost, scope.vms || [])}
     </section>
     <section class="report-section">
       <h2>Categories</h2>
@@ -710,6 +780,10 @@ export function reportBody(doc) {
     <section class="report-section">
       <h2>Capture details</h2>
       ${reportDetails(doc)}
+    </section>
+    <section class="report-section report-appendix">
+      <h2>Complete metric appendix</h2>
+      ${reportMetricAppendix(doc)}
     </section>
     <section class="report-section">
       <h2>Method and caveats</h2>
@@ -732,8 +806,8 @@ function reportFilename(doc) {
   return `esxtop-report-${host}-${stamp}.html`;
 }
 
-export function reportDocument(doc, { autoPrint = false, toolbar = true } = {}) {
-  const title = `ESXtop Lens report · ${doc?.meta?.host || 'capture'}`;
+export function reportDocument(doc, { autoPrint = false, toolbar = true, scope = {} } = {}) {
+  const title = `ESXtop Lens report · ${scope.host || doc?.meta?.host || 'capture'}`;
   const printBar = toolbar ? '<div class="report-print-bar"><button type="button" onclick="window.print()">Print / Save as PDF</button></div>' : '';
   const auto = autoPrint ? '<script>window.addEventListener("load",()=>setTimeout(()=>window.print(),500));</script>' : '';
   return `<!doctype html>
@@ -746,14 +820,14 @@ export function reportDocument(doc, { autoPrint = false, toolbar = true } = {}) 
 </head>
 <body class="report-standalone">
 ${printBar}
-${reportBody(doc)}
+${reportBody(doc, scope)}
 ${auto}
 </body>
 </html>`;
 }
 
-export function downloadReportHTML(doc, toast = null) {
-  const blob = new Blob([reportDocument(doc)], { type: 'text/html;charset=utf-8' });
+export function downloadReportHTML(doc, toast = null, scope = {}) {
+  const blob = new Blob([reportDocument(doc, { scope })], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -763,14 +837,14 @@ export function downloadReportHTML(doc, toast = null) {
   if (toast) toast('HTML report downloaded.');
 }
 
-export function openReportPrintWindow(doc, toast = null) {
+export function openReportPrintWindow(doc, toast = null, scope = {}) {
   const win = window.open('', '_blank');
   if (!win) {
     if (toast) toast('Pop-up blocked. Allow pop-ups to export the PDF report.');
     return;
   }
   win.document.open();
-  win.document.write(reportDocument(doc, { autoPrint: true, toolbar: true }));
+  win.document.write(reportDocument(doc, { autoPrint: true, toolbar: true, scope }));
   win.document.close();
   win.focus();
   if (toast) toast('Report opened. Choose “Save as PDF” in the print dialog.');

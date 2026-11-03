@@ -584,10 +584,15 @@ def parse_capture(path: str | Path, filename: str) -> dict[str, Any]:
             start_label = raw_times[0]
             end_label = raw_times[-1]
             warnings: list[str] = []
+            hosts = sorted(host_counts, key=lambda name: (-host_counts[name], name.lower()))
             if mismatched_rows:
                 warnings.append(
                     f"{mismatched_rows} row(s) had a different number of fields than the header; "
                     "missing cells were treated as empty."
+                )
+            if len(hosts) > 1:
+                warnings.append(
+                    f"Capture contains {len(hosts)} ESXi host names. Use the report host scope to inspect each host; global summaries remain capture-wide."
                 )
             if compressed:
                 warnings.append("The upload was gzip-compressed and was decompressed in memory.")
@@ -622,6 +627,8 @@ def parse_capture(path: str | Path, filename: str) -> dict[str, Any]:
                 "meta": {
                     "filename": filename or source.name,
                     "host": host,
+                    "hosts": hosts,
+                    "hostCount": len(hosts),
                     "captureStart": start_label,
                     "captureEnd": end_label,
                     "durationSeconds": duration,

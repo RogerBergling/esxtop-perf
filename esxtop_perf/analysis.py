@@ -807,7 +807,7 @@ def build_analysis(parsed: dict[str, Any]) -> dict[str, Any]:
         # Alternative counters can describe the same condition (for example
         # PCPU %, % Util Time and % Core Util Time). Group by the finding name,
         # entity and category rather than by individual metric to avoid noise.
-        key = (rule.title, item.get("entity", ""), item.get("category", rule.category))
+        key = (rule.title, item.get("host", ""), item.get("entity", ""), item.get("category", rule.category))
         finding = grouped.get(key)
         if finding is None:
             finding = {
@@ -819,6 +819,7 @@ def build_analysis(parsed: dict[str, Any]) -> dict[str, Any]:
                 "summary": rule.summary,
                 "recommendation": rule.recommendation,
                 "scope": item.get("scope", ""),
+                "host": item.get("host", ""),
                 "entity": item.get("entity", ""),
                 "entityKind": item.get("entityKind", ""),
                 "metric": rule.metric,

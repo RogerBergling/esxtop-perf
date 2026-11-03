@@ -28,7 +28,9 @@ import {
   downloadReportHTML,
   openReportPrintWindow,
   reportBody,
+  reportHostNames,
   reportStyles,
+  reportVmNames,
 } from './report.js';
 import {
   relationshipsFor,
@@ -911,26 +913,88 @@ export async function renderOverview(ctx) {
 
 export function renderReport(ctx) {
   const doc = ctx.doc;
+  const hosts = reportHostNames(doc);
+  const initialHost = doc.meta.host || hosts[0] || '';
+  const initialVms = reportVmNames(doc, initialHost);
+  const scopeOptions = (selected = '') => hosts.map((host) => `<option value="${escapeAttr(host)}"${host === selected ? ' selected' : ''}>${esc(host)}</option>`).join('');
   return {
     html: `
       <div class="page-head">
         <div class="eyebrow">Export · capture report</div>
         <h1>Capture report</h1>
-        <p class="page-lede">A standalone report with the executive summary, a prioritized “What to do next” action plan, every finding, a host snapshot, host disk adapters/devices, a VM summary, per-disk storage latency, memory/network detail and a technical reference. The HTML file opens without the app; the PDF button opens the browser print dialog.</p>
+        <p class="page-lede">A standalone report with the executive summary, a prioritized “What to do next” action plan, every finding, a host snapshot, host disk adapters/devices, a VM summary, per-disk storage latency, memory/network detail, a technical reference and a complete appendix of every captured metric. Choose the host and VMs for the detailed sections; the HTML file opens without the app and the PDF button opens the browser print dialog.</p>
         <div class="summary-actions report-toolbar">
           <button class="btn btn-primary" type="button" id="report-html">${icon('download', 15)} Export HTML</button>
           <button class="btn" type="button" id="report-pdf">${icon('file', 15)} Export PDF</button>
+          <button class="btn" type="button" id="report-metrics-csv">${icon('table', 15)} Export all metrics CSV</button>
           <a class="btn btn-ghost" href="#/">${icon('back', 14)} Back to overview</a>
         </div>
         <div class="callout mt-1"><strong>PDF export:</strong> the browser print dialog opens. Choose <b>Save as PDF</b> (or “Print to PDF”) and keep the default A4 page size.</div>
       </div>
       ${captureTabs(doc, 'report')}
+      <section class="card report-scope-card">
+        <div class="card-header"><div><div class="card-kicker">Report scope</div><h2>Choose the detailed host and VM view</h2></div>${pill('Filter detail only', 'accent')}</div>
+        <div class="form-grid">
+          <label class="field"><span>ESXi host</span><select class="select" id="report-host">${scopeOptions(initialHost)}</select></label>
+          <label class="field"><span>VMs in detailed sections</span><select class="select" id="report-vms" multiple size="6">${initialVms.map((name) => `<option value="${escapeAttr(name)}">${esc(name)}</option>`).join('')}</select></label>
+        </div>
+        <p class="report-note">No VM selected means all VMs on the chosen host. Ctrl/Cmd-click to choose one or several. The executive summary, findings, category overview and complete metric appendix remain capture-wide; only host/VM detail sections and exports are scoped.</p>
+        <div class="summary-actions"><button class="btn btn-sm" type="button" id="report-clear-vms">All VMs on host</button><span class="dim" id="report-scope-summary"></span></div>
+      </section>
       <style>${reportStyles()}</style>
-      ${reportBody(doc)}
+      <div id="report-content">${reportBody(doc, { host: initialHost, vms: [] })}</div>
     `,
     mount(root) {
-      root.querySelector('#report-html')?.addEventListener('click', () => downloadReportHTML(doc, ctx.toast));
-      root.querySelector('#report-pdf')?.addEventListener('click', () => openReportPrintWindow(doc, ctx.toast));
+      const hostSelect = root.querySelector('#report-host');
+      const vmSelect = root.querySelector('#report-vms');
+      const content = root.querySelector('#report-content');
+      const summary = root.querySelector('#report-scope-summary');
+      const selectedScope = () => ({
+        host: hostSelect?.value || initialHost,
+        vms: vmSelect ? [...vmSelect.selectedOptions].map((option) => option.value) : [],
+      });
+      const updateSummary = () => {
+        const scope = selectedScope();
+        const count = scope.vms.length;
+        if (summary) summary.textContent = count
+          ? `${count} VM${count === 1 ? '' : 's'} selected on ${scope.host}`
+          : `All VMs on ${scope.host}`;
+      };
+      const renderScope = () => {
+        content.innerHTML = reportBody(doc, selectedScope());
+        updateSummary();
+      };
+      const populateVms = () => {
+        const host = hostSelect?.value || initialHost;
+        const names = reportVmNames(doc, host);
+        if (vmSelect) {
+          vmSelect.innerHTML = names.map((name) => `<option value="${escapeAttr(name)}">${esc(name)}</option>`).join('');
+          vmSelect.size = Math.max(4, Math.min(8, names.length || 4));
+        }
+        renderScope();
+      };
+      hostSelect?.addEventListener('change', populateVms);
+      vmSelect?.addEventListener('change', renderScope);
+      root.querySelector('#report-clear-vms')?.addEventListener('click', () => {
+        if (!vmSelect) return;
+        [...vmSelect.options].forEach((option) => { option.selected = false; });
+        renderScope();
+      });
+      root.querySelector('#report-html')?.addEventListener('click', () => downloadReportHTML(doc, ctx.toast, selectedScope()));
+      root.querySelector('#report-pdf')?.addEventListener('click', () => openReportPrintWindow(doc, ctx.toast, selectedScope()));
+      root.querySelector('#report-metrics-csv')?.addEventListener('click', () => {
+        const rows = [['category', 'metric', 'metric_name', 'group', 'instance', 'entity', 'scope', 'unit', 'min', 'avg', 'p95', 'max', 'last', 'status', 'raw_header']];
+        for (const series of doc.series || []) {
+          rows.push([
+            series.category, series.metric, doc.metrics?.[series.metric]?.name || series.metricName || series.metric,
+            series.group, series.instance, series.entity, series.scope, series.unit,
+            series.stats?.min, series.stats?.avg, series.stats?.p95, series.stats?.max, series.stats?.last,
+            series.status, series.rawHeader,
+          ]);
+        }
+        csvDownload(`esxtop-all-metrics-${doc.meta.host || 'capture'}.csv`, rows);
+      });
+      updateSummary();
     },
   };
 }

@@ -243,6 +243,32 @@ class ParserEdgeTests(unittest.TestCase):
         self.assertEqual(document["summary"]["critical"], 0)
         self.assertEqual(document["summary"]["warning"], 0)
 
+
+    def test_multi_host_metadata_and_report_scope_inputs(self) -> None:
+        header = (
+            '"(PDH-CSV 4.0) (UTC)(0)",'
+            '"\\\\h1\\Physical Cpu(_Total)\\% Processor Time",'
+            '"\\\\h2\\Physical Cpu(_Total)\\% Processor Time"'
+        )
+        body = "\n".join(
+            f'"11/02/2026 12:00:0{index}","{h1_value}","{h2_value}"'
+            for index, (h1_value, h2_value) in enumerate(((10, 11), (11, 95), (9, 96)))
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8") as handle:
+            handle.write(f"{header}\n{body}\n")
+            name = handle.name
+        try:
+            document = build_analysis(parse_capture(name, "multi-host.csv"))
+        finally:
+            Path(name).unlink(missing_ok=True)
+        self.assertEqual(document["meta"]["hosts"], ["h1", "h2"])
+        self.assertEqual(document["meta"]["hostCount"], 2)
+        self.assertEqual({item["host"] for item in document["series"]}, {"h1", "h2"})
+        self.assertTrue(any(
+            finding["host"] == "h2" and finding["metric"] == "PCPU %"
+            for finding in document["findings"]
+        ))
+
     def test_non_pdh_file_is_rejected(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8") as handle:
             handle.write('"not a capture","1"\n')
