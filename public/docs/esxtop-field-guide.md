@@ -191,6 +191,34 @@ A real ESXi 8.0 U3 `.esxtop60rc` looks like this:
 
 The number of panel-layout lines is release-specific; the last line is the options line. The `60` in `.esxtop60rc` is historical — the same default filename can still be used on newer releases, including ESXi 8.0 U3. Uppercase letters mark selected fields and lowercase letters mark hidden fields, but do not hand-edit the file. Always save it with `W`.
 
+### What the other panels contain
+
+If you are capturing storage, also inspect the non-storage panels before pressing `W`. The rc file stores every panel layout, so any fields left selected in `c`, `m`, `n`, `i` or `p` will still appear in the batch header.
+
+| Key | Panel | What it contains | Storage-only action |
+|---|---|---|---|
+| `c` | CPU | Host PCPU and per-world/group scheduling: `%USED`, `%RUN`, `%SYS`, `%WAIT`, `%RDY`, `%MLMTD`, `%CSTP`, `%SWPWT`. | Clear all if you only need storage. Keep `%RDY`, `%MLMTD` and `%CSTP` if the incident also involves CPU contention. |
+| `m` | Memory | Host free/overcommit memory, ballooning, VMkernel swap, compression and VM NUMA locality. | Clear all. Keep `MCTLSZ`, `SWCUR`, `SWR/s`, `SWW/s` or `N%L` when memory pressure is part of the same investigation. |
+| `n` | Network | Virtual switch ports, uplinks, packet/bit rates, packet size, link state, transmit/receive drops. | Clear all. Keep drops and throughput for iSCSI or NFS storage paths. |
+| `i` | Interrupts | Per-CPU interrupt activity and vector data; useful for driver, NIC or storage-controller interrupt storms. | Clear all unless interrupts are part of the investigation. |
+| `p` | CPU Power | Power-management state, CPU frequency, `%A/MPERF` and power data; useful for P-state, turbo or frequency questions. | Clear all for normal storage captures. |
+
+The interactive sequence is:
+
+```text
+u -> f   select disk-device fields
+d -> f   select disk-adapter fields
+v -> f   select VM-disk fields
+c -> f   deselect unwanted CPU fields
+m -> f   deselect unwanted memory fields
+n -> f   deselect unwanted network fields
+i -> f   deselect unwanted interrupt fields
+p -> f   deselect unwanted CPU-power fields
+W        write one rc file
+```
+
+An all-lowercase panel line in the resulting config means that every field in that panel is hidden. Panel availability and exact field letters vary by ESXi release; use the interactive `f` screen as the source of truth, not a copied config from a different version.
+
 Important details:
 
 - **Do not add `-a`** to the focused command. Broadcom documents that `-a` overrides configuration-file setup and shows all statistics.

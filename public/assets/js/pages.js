@@ -1465,7 +1465,7 @@ export function renderCapture(ctx) {
   const steps = [
     ['Start esxtop interactively', 'Open an SSH session to the ESXi host as root and run <code>esxtop</code>. Do not add <code>-a</code> here; you are preparing a focused field layout.'],
     ['Open the panel you need', 'Use <b>d</b> for Disk Adapter, <b>u</b> for Disk Device, <b>v</b> for VM Disk, <b>c</b> for CPU, <b>m</b> for memory, or <b>n</b> for network. For a complete storage view, configure <b>d</b>, <b>u</b> and <b>v</b> in the same session.'],
-    ['Select fields with f', 'Press <b>f</b> to open the field-selection panel. Enable only the counters you need. Press <b>o</b> if you also want to reorder them. Repeat this in every panel you want to exclude or include; the rc file stores all panel selections. To collect only storage, clear the fields you do not want in <b>c</b>, <b>m</b>, <b>n</b>, <b>i</b> and <b>p</b> as well.'],
+    ['Select fields with f', 'Press <b>f</b> to open the field-selection panel. Enable only the counters you need. Press <b>o</b> if you also want to reorder them. Repeat this in every panel you want to exclude or include; the rc file stores all panel selections. To collect only storage, clear the fields you do not want in <b>c</b>, <b>m</b>, <b>n</b>, <b>i</b> and <b>p</b> as well — see “What c, m, n, i and p contain” below.'],
     ['Write the config with W', 'Press <b>W</b> — uppercase, case-sensitive. At the prompt, enter an <b>absolute datastore path</b> such as /vmfs/volumes/datastore1/esxtop-disk.rc. Do not accept a default path under /tmp or the ESXi ramdisk if the file must survive a reboot.'],
     ['Verify the file and header', 'Run a tiny batch test with <code>-n 2</code>, then inspect the CSV header. This proves the config is readable and that the expected counters are present before a long capture.'],
     ['Run the focused capture', 'Use <code>esxtop -b -c &lt;absolute-rc-path&gt; -d &lt;interval&gt; -n &lt;samples&gt;</code>. Do not add <code>-a</code>: it overrides the configuration and collects all statistics.'],
@@ -1556,6 +1556,38 @@ head -1 /vmfs/volumes/datastore1/esxtop-test.csv \
           <p class="dim">The “Panel to configure” dropdown above is only a hint. The rc file path you pass to <code>-c</code> is what determines the collected fields.</p>
         </div>
       </div>
+
+      <div class="section-head" id="other-panels"><div><div class="eyebrow">Other panels</div><h2>What <code>c</code>, <code>m</code>, <code>n</code>, <code>i</code> and <code>p</code> contain</h2></div><p>The rc file stores every panel layout, not just the panel currently on screen. If you want storage-only data, clear these before <b>W</b>; otherwise leftover fields appear in the batch header.</p></div>
+
+      <div class="panel-reference-grid">
+        <article class="panel-ref">
+          <div class="panel-ref-head"><span class="panel-key">c</span><h3>CPU</h3></div>
+          <p>Host physical CPU and world/group scheduling data: <code>%USED</code>, <code>%RUN</code>, <code>%SYS</code>, <code>%WAIT</code>, <code>%RDY</code>, <code>%MLMTD</code>, <code>%CSTP</code> and <code>%SWPWT</code>.</p>
+          <p class="panel-keep"><b>Storage-only:</b> press <b>c</b>, then <b>f</b>, and deselect all fields. Keep CPU fields only if you also need contention or limit evidence.</p>
+        </article>
+        <article class="panel-ref">
+          <div class="panel-ref-head"><span class="panel-key">m</span><h3>Memory</h3></div>
+          <p>Host free/overcommit memory and per-VM grant, ballooning, VMkernel swap, compression and NUMA locality. Useful for memory-pressure correlation.</p>
+          <p class="panel-keep"><b>Storage-only:</b> clear all fields. For NFS/iSCSI storage, you may instead keep swap-I/O and network-path signals if memory pressure is part of the incident.</p>
+        </article>
+        <article class="panel-ref">
+          <div class="panel-ref-head"><span class="panel-key">n</span><h3>Network</h3></div>
+          <p>Virtual switch ports, uplinks, packet and bit rates, average packet size, link state and transmit/receive drop percentages.</p>
+          <p class="panel-keep"><b>Storage-only:</b> clear all fields. Keep drops and throughput when the datastore path is iSCSI or NFS.</p>
+        </article>
+        <article class="panel-ref">
+          <div class="panel-ref-head"><span class="panel-key">i</span><h3>Interrupts</h3></div>
+          <p>Per-CPU interrupt activity and vector data. It is mainly useful when you suspect a driver, NIC or storage-controller interrupt storm.</p>
+          <p class="panel-keep"><b>Storage-only:</b> clear all fields unless interrupt behaviour is part of the storage investigation.</p>
+        </article>
+        <article class="panel-ref">
+          <div class="panel-ref-head"><span class="panel-key">p</span><h3>CPU Power</h3></div>
+          <p>CPU power-management state, frequency, <code>%A/MPERF</code> and power data. Use it for power, turbo or frequency-scaling questions, not routine storage capture.</p>
+          <p class="panel-keep"><b>Storage-only:</b> clear all fields. Panel availability and field letters vary by ESXi release.</p>
+        </article>
+      </div>
+
+      <div class="callout accent"><strong>Storage-only sequence:</strong> configure <b>d</b>, <b>u</b> and <b>v</b> as needed; then visit <b>c</b>, <b>m</b>, <b>n</b>, <b>i</b> and <b>p</b>, press <b>f</b> in each panel, deselect the fields you do not want, and press <b>W</b> once. An all-lowercase panel line means every field in that panel is hidden. This is the step that keeps leftover counters out of the batch header.</div>
 
       <div class="card flat mt-1">
         <div class="card-kicker">Real file · ESXi 8.0 U3</div>

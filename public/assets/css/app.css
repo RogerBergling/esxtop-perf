@@ -696,3 +696,13 @@ table.data tr.clickable:hover td.name a { text-decoration: underline; }
   .form-grid, .steps-grid { grid-template-columns: 1fr; }
   .field-wide { grid-column: auto; }
 }
+
+/* ---------- capture panel reference ---------- */
+.panel-reference-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: .7rem; }
+.panel-ref { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: .8rem .85rem; display: flex; flex-direction: column; gap: .35rem; }
+.panel-ref-head { display: flex; align-items: center; gap: .45rem; }
+.panel-key { width: 27px; height: 27px; border-radius: 7px; display: grid; place-items: center; font-family: var(--mono); font-size: .72rem; font-weight: 700; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.panel-ref h3 { margin: 0; font-size: .88rem; }
+.panel-ref p { margin: 0; font-size: .74rem; color: var(--muted); line-height: 1.48; }
+.panel-ref .panel-keep { border-top: 1px solid var(--line); padding-top: .35rem; color: var(--text-soft); }
+.panel-ref code { font-size: .88em; }

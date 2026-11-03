@@ -66,9 +66,9 @@ def main() -> int:
         FAILURES.append(f"public/version.json is not valid JSON: {exc}")
     check(bool(version.get("version")), "public/version.json must contain a version")
     check(version.get("version") != "0.0.0", "version must not be a placeholder")
-    check("1.3.0" in (ROOT / "esxtop_perf/catalog.py").read_text(encoding="utf-8"), "APP_VERSION is not 1.3.0")
+    check("1.3.1" in (ROOT / "esxtop_perf/catalog.py").read_text(encoding="utf-8"), "APP_VERSION is not 1.3.1")
     package = (ROOT / "esxtop_perf/catalog.py").read_text(encoding="utf-8")
-    check('APP_VERSION = "1.3.0"' in package, "catalog APP_VERSION must match public/version.json")
+    check('APP_VERSION = "1.3.1"' in package, "catalog APP_VERSION must match public/version.json")
 
     index = (ROOT / "public/index.html").read_text(encoding="utf-8")
     check("/assets/css/app.css" in index, "index.html does not load the stylesheet")
@@ -94,6 +94,10 @@ def main() -> int:
     check("## 5. CPU counters" in guide, "field guide lacks CPU section")
     check("### Focused capture with `-c`" in guide, "field guide lacks focused capture manual")
     check("Multiple storage panels in one rc file" in guide, "field guide lacks multi-panel rc guidance")
+    check("### What the other panels contain" in guide, "field guide lacks c/m/n/i/p panel explanations")
+    check("| `i` | Interrupts |" in guide, "field guide lacks interrupt panel explanation")
+    check("| `p` | CPU Power |" in guide, "field guide lacks CPU power panel explanation")
+    check("Clear all if you only need storage" in guide, "field guide lacks storage-only field guidance")
     check("There is no separate Datastore panel" in guide, "field guide must explain that Datastore is not an esxtop panel")
     check("ABCDEfGHIJkl" in guide, "field guide lacks the annotated .esxtop60rc example")
     check("### Sizing large captures" in guide, "field guide lacks large-capture sizing guidance")
@@ -144,7 +148,7 @@ def main() -> int:
         check(marker in app_js, f"app.js missing route/feature marker: {marker}")
 
     pages_js = (ROOT / "public/assets/js/pages.js").read_text(encoding="utf-8")
-    for marker in ("Storage bundle: Adapter + Device + VM Disk", "There is no separate Datastore panel in esxtop", "Real file · ESXi 8.0 U3", "Anatomy of a real <code>.esxtop60rc</code>", "ABCDEfGHIJkl", "Large sample count?", "Sizing large captures", "Capture report", "Export HTML", "Export PDF", "reportBody(doc)", "Technical vocabulary", "Technical detail", "How these counters fit together", "Support workflow", "Internal ESXi system worlds"):
+    for marker in ("Storage bundle: Adapter + Device + VM Disk", "There is no separate Datastore panel in esxtop", "Real file · ESXi 8.0 U3", "Anatomy of a real <code>.esxtop60rc</code>", "ABCDEfGHIJkl", "Large sample count?", "Sizing large captures", "Capture report", "Export HTML", "Export PDF", "reportBody(doc)", "Technical vocabulary", "Technical detail", "How these counters fit together", "Support workflow", "Internal ESXi system worlds", "What <code>c</code>, <code>m</code>, <code>n</code>, <code>i</code> and <code>p</code> contain", "panel-reference-grid", "Storage-only sequence"):
         check(marker in pages_js, f"Capture page missing multi-panel marker: {marker}")
     check("Real file · ESXi 6.0" not in pages_js, "Capture page must not label the ESXi 8.0 U3 rc as ESXi 6.0")
 

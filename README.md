@@ -93,7 +93,7 @@ The launcher serves the app on the first free port in **8080–8099** unless `--
 
 ```bash
 docker build \
-  --build-arg APP_VERSION=1.3.0 \
+  --build-arg APP_VERSION=1.3.1 \
   --build-arg IMAGE_TAG=local \
   --build-arg GIT_SHA="$(git rev-parse --short HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -224,6 +224,16 @@ esxtop -b -c /vmfs/volumes/datastore1/esxtop-disk.rc -d 5 -n 60 \
 **Do not add `-a`** to a focused command — Broadcom documents that `-a` overrides the configuration and collects all statistics. `-c` takes an absolute path; `.esxtoprc` is not a guaranteed default name. The exact default varies by ESXi release and is shown in the `W` prompt. Do not keep the only copy under `/tmp` or on an unhealthy datastore.
 
 **One rc, several storage panels.** `d` (Disk Adapter), `u` (Disk Device) and `v` (VM Disk) can all coexist in one rc file; configure each panel in the same interactive session and press `W` once. There is no separate Datastore panel in esxtop: a datastore can span devices/extents, so use `u` for the backing device and `v` for per-VM I/O, or use the vSphere Datastore chart. The file stores every panel layout, so clear fields in the other panels if you want a storage-only capture. The number of panel-layout lines is release-specific; the last line holds options. See the [field guide](public/docs/esxtop-field-guide.md#focused-capture-with--c) for a real ESXi 8.0 U3 `.esxtop60rc` annotated line by line.
+
+The other panels are part of the rc file even when you only care about storage. Clear their fields before `W`, or they will remain in the batch header:
+
+| Key | Panel | What it contains | Storage-only action |
+|---|---|---|---|
+| `c` | CPU | Host PCPU and world/group scheduling: `%USED`, `%RUN`, `%RDY`, `%MLMTD`, `%CSTP`, `%SWPWT`. | Clear all, or retain CPU contention fields if the incident is mixed. |
+| `m` | Memory | Host free/overcommit, ballooning, VMkernel swap, compression and NUMA locality. | Clear all unless memory pressure is part of the same investigation. |
+| `n` | Network | Ports, uplinks, packet/bit rates, link state and drop percentages. | Clear all; retain drops and throughput for iSCSI/NFS storage paths. |
+| `i` | Interrupts | Per-CPU interrupt activity and vector data. | Clear all unless investigating a driver, NIC or HBA interrupt storm. |
+| `p` | CPU Power | Power state, CPU frequency, `%A/MPERF` and power data. | Clear all for normal storage captures. |
 
 The app includes a step-by-step **Capture** page and command builder at `#/capture`. A detailed version is also in the [field guide](public/docs/esxtop-field-guide.md#focused-capture-with--c).
 
@@ -357,7 +367,7 @@ ghcr.io/rogerbergling/esxtop-perf
 | --- | --- |
 | Push to `main` | `latest`, `main`, `sha-<short>` |
 | Push to another branch | `<branch>`, `sha-<short>` |
-| Tag `v1.3.0` | `v1.3.0`, `sha-<short>` |
+| Tag `v1.3.1` | `v1.3.1`, `sha-<short>` |
 | Manual run | Tags for the selected ref |
 
 No repository secrets are required; the workflow uses `GITHUB_TOKEN`. A new GHCR package is private by default. Make it public once, or authenticate the host with `read:packages`.

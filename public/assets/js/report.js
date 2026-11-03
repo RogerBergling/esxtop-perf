@@ -129,6 +129,8 @@ const REPORT_CSS = `
   .capture-report .report-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .capture-report .report-grid-2 { grid-template-columns: 1fr; }
   .capture-report .report-evidence { margin-left: 0; }
+  .capture-report .report-table { display: block; max-width: 100%; overflow-x: auto; }
+  .capture-report .report-table th, .capture-report .report-table td { white-space: nowrap; }
 }
 `;
 
