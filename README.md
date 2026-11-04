@@ -591,3 +591,14 @@ Main design choices:
 MIT. See [LICENSE](LICENSE).
 
 ESXtop Lens is unofficial and not affiliated with Broadcom or VMware. It is a troubleshooting aid, not a replacement for the official documentation, vSphere alarms, array tooling or a full performance review.
+
+---
+
+## Development note
+
+This project was developed with AI assistance and human review. The maintainer
+defines the requirements, threat model, edge cases and acceptance criteria; AI
+helps write and refactor code; the maintainer tests, breaks and verifies it.
+The software is provided as-is, without warranty. See
+[How this was built](https://apps.bergling.net/how-this-was-built/) for the
+longer explanation.
