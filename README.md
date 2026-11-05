@@ -191,7 +191,7 @@ curl -i -H "X-ESXTOP-Upload-Password: YOUR_PASSWORD" \
 
 ```bash
 docker build \
-  --build-arg APP_VERSION=1.8.3 \
+  --build-arg APP_VERSION=1.8.4 \
   --build-arg IMAGE_TAG=local \
   --build-arg GIT_SHA="$(git rev-parse --short HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -398,7 +398,7 @@ Rules evaluate a specific statistic:
 
 - **P95** for most “higher is worse” conditions, which reduces single-spike noise.
 - **P05** for “lower is worse” conditions such as NUMA locality.
-- **Maximum** for hard error counters such as aborts, resets and failed ATS/UNMAP operations.
+- **Maximum** for hard error counters such as aborts, resets, failed I/O, failed ATS/UNMAP and failed VAAI operations.
 - A small number of rules use another statistic such as average or median where the rule definition says so.
 
 The **signal score** is:
@@ -412,6 +412,10 @@ healthy rule-evaluated series / (healthy + warning + critical rule-evaluated ser
 **We do not hide captured data.** Every captured series remains available in **All metrics**, its metric page, the complete report appendix and the filtered metrics CSV, including every “No rule” series. A field that is completely absent from the upload is omitted from the UI because there is no captured value to display; it is not converted to zero, healthy or “No rule.” A field that exists but has no value for one entity may show `—` for that entity, which is an entity-level absence rather than a missing captured field.
 
 The absence of a finding is not a guarantee of health. A clean rule result means only that the curated rules evaluated the available series and found no threshold breach. Confirm the raw counters, the guest, the array, the network and the change history before concluding that the environment is healthy.
+
+**Rule coverage is deliberately selective.** Rules now cover the combined and read/write-specific storage latency layers (`GAVG/cmd`, `GAVG/rd`, `GAVG/wr`, `DAVG/cmd`, `DAVG/rd`, `DAVG/wr`, `KAVG/cmd`, `KAVG/rd`, `KAVG/wr`, `QAVG/cmd`, `QAVG/rd`, `QAVG/wr`, `LAT/rd`, `LAT/wr`), queue pressure, hard storage failures (failed commands, reads, writes, bytes, reserves, UNMAP and VAAI failure counters), host load averages, overcommit and reclaim signals.
+
+Workload counters such as `CMDS/s`, `READS/s`, `WRITES/s`, `MBREAD/s` and `MBWRTN/s` intentionally remain **No rule**. A high command rate or throughput is demand, not a health verdict; it must be judged with latency, queue depth and the backing device. `VSCSI_LATENCY` is also unruled because its aggregation is vendor- and release-specific; use `LAT/rd`, `LAT/wr`, `GAVG/rd` and `GAVG/wr` instead. Queue-depth settings, allocation fields, most VAAI success latencies, power states and interrupt details are context, not universal good/bad thresholds.
 
 > Performance is contextual. A red signal is not automatically the root cause, and a clean report is not proof that the host is healthy. Confirm every recommendation in your own guest, array and network.
 
@@ -548,7 +552,7 @@ ghcr.io/rogerbergling/esxtop-perf
 | --- | --- |
 | Push to `main` | `latest`, `main`, `sha-<short>` |
 | Push to another branch | `<branch>`, `sha-<short>` |
-| Tag `v1.8.3` | `v1.8.3`, `sha-<short>` |
+| Tag `v1.8.4` | `v1.8.4`, `sha-<short>` |
 | Manual run | Tags for the selected ref |
 
 No repository secrets are required; the workflow uses `GITHUB_TOKEN`. A new GHCR package is private by default. Make it public once, or authenticate the host with `read:packages`.

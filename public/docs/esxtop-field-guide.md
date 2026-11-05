@@ -470,6 +470,10 @@ Broadcom 344099 states that DAVG, KAVG and GAVG should not remain above 10 ms fo
 
 Read and write latency can differ significantly because of cache behaviour, RAID, thin provisioning and queueing. Use `LAT/rd` and `LAT/wr`, or the read/write-specific DAVG/KAVG/GAVG counters, when the combined average hides a one-sided problem.
 
+The rule engine applies the same layer guardrail to the combined and split counters: 10/25 ms for device and guest latency, 2/5 ms for VMkernel latency, 5/10 ms for queue latency, and 10/25 ms for virtual-disk `LAT/rd` and `LAT/wr`. Findings are grouped by entity, so a VM with high read and write latency produces one “Guest storage latency is elevated” finding rather than two.
+
+`CMDS/s`, `READS/s`, `WRITES/s`, `MBREAD/s` and `MBWRTN/s` are workload, not health thresholds. A busy VM with low latency is not a problem; a lightly loaded VM with high latency is. The app leaves these counters as **No rule** and reports the latency, queue and failure signals instead. `VSCSI_LATENCY` is also left unruled because its aggregation differs by release and vendor; use `LAT/rd`, `LAT/wr`, `GAVG/rd` and `GAVG/wr`.
+
 The storage panels are different views of the same stack:
 
 - **Disk VM** (`v`): what the guest virtual disk sees.
@@ -529,20 +533,29 @@ These are the guardrails used by the built-in rule engine. They are intentionall
 | CPU | `%CSTP` | 3% | 5% | Yellow Bricks 3% |
 | CPU | `%SWPWT` | 1% | 5% | Yellow Bricks 5%; any sustained wait is relevant |
 | CPU | host core | 80% | 90% | Operational guardrail |
-| CPU | load average 1 min | 1.0 | 2.0 | Broadcom VM performance article |
+| CPU | load average 1/5/15 min | 1.0 | 2.0 | Broadcom VM performance article |
 | Memory | `MCTLSZ` | 1 MB | 1 GB | Yellow Bricks 1 MB plus guardrail |
 | Memory | `SWCUR` | 0.1 MB | 1 GB | Any current swap plus guardrail |
 | Memory | swap I/O | 0.01 MB/s | 1 MB/s | Any sustained activity is a concern |
+| Memory | overcommit 1/5/15 min | 1.0 (Info) | — | Planning signal, not proof of reclaim |
 | Memory | `N%L` | <80% | <50% | Yellow Bricks 80% |
-| Storage | `DAVG/cmd`, `GAVG/cmd` | 10 ms | 25 ms | Broadcom 10 ms; Yellow Bricks 25 ms |
-| Storage | `KAVG/cmd` | 2 ms | 5 ms | Yellow Bricks 2 ms plus guardrail |
+| Storage | `DAVG/cmd`, `DAVG/rd`, `DAVG/wr` | 10 ms | 25 ms | Broadcom 10 ms; Yellow Bricks 25 ms |
+| Storage | `GAVG/cmd`, `GAVG/rd`, `GAVG/wr` | 10 ms | 25 ms | Broadcom 10 ms; Yellow Bricks 25 ms |
+| Storage | `LAT/rd`, `LAT/wr` | 10 ms | 25 ms | Guest-visible virtual-disk latency; same guardrail as GAVG |
+| Storage | `KAVG/cmd`, `KAVG/rd`, `KAVG/wr` | 2 ms | 5 ms | Yellow Bricks 2 ms plus guardrail |
+| Storage | `QAVG/cmd`, `QAVG/rd`, `QAVG/wr` | 5 ms | 10 ms | Queue latency is highly array-dependent |
 | Storage | `QUED` | 1 | 10 | Yellow Bricks 1 |
 | Storage | `CONS/s` | 20/s | 50/s | Yellow Bricks 20/s plus guardrail |
 | Storage | `ABRTS/s`, `RESETS/s` | any | 1/s | Any sustained abort/reset is abnormal |
+| Storage | `FCMDS/s`, `FREAD/s`, `FWRITE/s`, `FMBRD/s`, `FMBWR/s`, `FRESV/s`, `FAILED_IO` | any | — | Hard failure signal; sustained failures are abnormal |
+| Storage | `UNMAP_FAIL/s`, `UNMAP_FAIL_MB/s`, `DELETE_F` | any | — | Any failed UNMAP is a storage/VAAI signal |
+| Storage | `CLONE_F`, `LCLONE_F`, `EXTSTATS_F`, `RESSPACE_F`, `ZERO_F` | any | — | Any failed VAAI operation is a health signal |
 | Storage | vSAN `SDLAT` | 5 ms | 10 ms | Yellow Bricks 5 ms plus guardrail |
 | Network | `%DRPTX`, `%DRPRX` | 1% | 5% | Yellow Bricks 1% plus guardrail |
 
-The engine uses P95 for sustained conditions and the maximum for hard error counters. It groups equivalent counters (for example `PCPU %`, `% Util Time` and `% Core Util Time`) into one host CPU finding so a single saturated core does not create three duplicate alerts.
+Workload counters (`CMDS/s`, `READS/s`, `WRITES/s`, `MBREAD/s`, `MBWRTN/s`), queue-depth settings (`AQLEN`, `DQLEN`, `LQLEN`, `WQLEN`) and allocation fields have no threshold. They describe demand or configuration, not health; judge them with latency, queue pressure and the backing device. `VSCSI_LATENCY` is also unruled because its aggregation is vendor- and release-specific; use `LAT/rd`, `LAT/wr`, `GAVG/rd` and `GAVG/wr` instead.
+
+The engine uses P95 for sustained conditions and the maximum for hard error counters. It groups equivalent counters (for example `PCPU %`, `% Util Time` and `% Core Util Time`) into one host CPU finding so a single saturated core does not create three duplicate alerts. Latency findings group the combined and read/write-specific series for the same entity.
 
 ## 11. Worked playbooks
 
@@ -604,7 +617,7 @@ Rules choose their statistic deliberately:
 
 - **P95** is used for most sustained “higher is worse” conditions to avoid reacting to one sample.
 - **P05** is used for “lower is worse” conditions such as NUMA locality.
-- **Maximum** is used for hard error counters such as aborts, resets and failed ATS/UNMAP operations.
+- **Maximum** is used for hard error counters such as aborts, resets, failed I/O, failed ATS/UNMAP and failed VAAI operations.
 - Some rules use average or median when the counter semantics call for it.
 
 The signal score is the share of **rule-evaluated** series that are healthy:
@@ -617,7 +630,7 @@ Info and No rule are excluded. If no series was rule-evaluated, the score is dis
 
 **Nothing captured is hidden from the user.** Every captured series is available in All metrics, its metric page, the complete report appendix and the filtered metrics CSV, including every No-rule series. A field that is absent from the upload is omitted from the rendered UI because there is no captured value; it is not shown as zero, healthy or No rule. A field that exists in the capture but has no sample for a particular entity may show `—` for that entity; that is entity-level absence, not a missing captured column.
 
-“No rule” is common for context counters, allocation settings, newly catalogued vendor fields, interrupt details, power-state breakdowns and VAAI/UNMAP counters. The value is still evidence; it simply has no curated threshold. The absence of a finding means no curated guardrail was crossed, not that the environment is guaranteed healthy.
+“No rule” is common for context counters, allocation settings, newly catalogued vendor fields, interrupt details, power-state breakdowns and successful VAAI/UNMAP workload counters. Failure counters such as `DELETE_F`, `ATSF`, `CLONE_F` and `UNMAP_FAIL/s` are ruled; success rates and throughput are not. The value is still evidence; it simply has no curated threshold. The absence of a finding means no curated guardrail was crossed, not that the environment is guaranteed healthy.
 
 Specific limits:
 

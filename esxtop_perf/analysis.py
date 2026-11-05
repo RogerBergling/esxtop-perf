@@ -31,6 +31,26 @@ class Rule:
     refs: tuple[str, ...] = field(default_factory=tuple)
 
 
+_STORAGE_FAILURE_SUMMARY = (
+    "A storage operation failed. A single transient failure can coincide with a path failover, "
+    "but sustained failures are not normal and should be investigated."
+)
+_STORAGE_FAILURE_RECOMMENDATION = (
+    "Check DAVG/KAVG, path state, array health, vmkernel.log and guest timeout events. "
+    "Correlate all failed-command, failed-byte and failed-reserve counters before changing "
+    "the path or queue settings."
+)
+_VAAI_FAILURE_SUMMARY = (
+    "A VAAI operation failed. The failure may be transient, but repeated failures point at "
+    "array support, VMFS locking or a storage-path problem."
+)
+_VAAI_FAILURE_RECOMMENDATION = (
+    "Confirm that the array supports the specific VAAI primitive, check VMFS heartbeat and "
+    "locking health, path state and vmkernel.log. Do not disable VAAI to hide a persistent "
+    "failure without understanding the array-side cause."
+)
+
+
 RULES: tuple[Rule, ...] = (
     Rule(
         id="cpu.ready",
@@ -191,19 +211,100 @@ RULES: tuple[Rule, ...] = (
         refs=("vm_performance",),
     ),
     Rule(
+        id="cpu.load5",
+        metric="LOAD5",
+        title="Host CPU load average is over 1.0",
+        category="cpu",
+        statistic="p95",
+        warn=1.0,
+        critical=2.0,
+        scope="host",
+        summary=(
+            "Broadcom describes a load average near 1.0 as fully utilised and 2.0 as an "
+            "overloaded host. The 5-minute average shows whether the condition is sustained."
+        ),
+        recommendation=(
+            "Check %RDY and host CPU utilisation. If the high load is sustained, reduce vCPU "
+            "allocation or add capacity. Use the 5- and 15-minute averages to separate a burst "
+            "from a persistent condition."
+        ),
+        refs=("vm_performance",),
+    ),
+    Rule(
+        id="cpu.load15",
+        metric="LOAD15",
+        title="Host CPU load average is over 1.0",
+        category="cpu",
+        statistic="p95",
+        warn=1.0,
+        critical=2.0,
+        scope="host",
+        summary=(
+            "Broadcom describes a load average near 1.0 as fully utilised and 2.0 as an "
+            "overloaded host. The 15-minute average is the baseline view of host pressure."
+        ),
+        recommendation=(
+            "Check %RDY and host CPU utilisation. A sustained 15-minute load above the guardrail "
+            "is stronger evidence than a short spike; reduce vCPU allocation or add capacity."
+        ),
+        refs=("vm_performance",),
+    ),
+    Rule(
         id="mem.overcommit",
         metric="OVERCOMMIT1",
         title="Memory is overcommitted",
         category="memory",
         statistic="p95",
         warn=1.0,
-        critical=2.0,
+        critical=None,
         scope="host",
         info=True,
         summary=(
             "The host's requested memory exceeds managed memory. Overcommit is a planning "
             "signal; it becomes a performance problem only when reclaim (ballooning or swap) "
             "is active."
+        ),
+        recommendation=(
+            "Do not resize based on overcommit alone. Correlate with MCTLSZ, SWCUR, SWR/s, "
+            "SWW/s and guest performance. Confirm whether VM memory limits or reservations "
+            "are distorting the ratio."
+        ),
+        refs=("vm_performance", "esxtop_metrics"),
+    ),
+    Rule(
+        id="mem.overcommit5",
+        metric="OVERCOMMIT5",
+        title="Memory is overcommitted",
+        category="memory",
+        statistic="p95",
+        warn=1.0,
+        critical=None,
+        scope="host",
+        info=True,
+        summary=(
+            "The 5-minute overcommit average is elevated. Overcommit is a planning signal, "
+            "not proof that the host is reclaiming memory or that guests are degraded."
+        ),
+        recommendation=(
+            "Do not resize based on overcommit alone. Correlate with MCTLSZ, SWCUR, SWR/s, "
+            "SWW/s and guest performance. Confirm whether VM memory limits or reservations "
+            "are distorting the ratio."
+        ),
+        refs=("vm_performance", "esxtop_metrics"),
+    ),
+    Rule(
+        id="mem.overcommit15",
+        metric="OVERCOMMIT15",
+        title="Memory is overcommitted",
+        category="memory",
+        statistic="p95",
+        warn=1.0,
+        critical=None,
+        scope="host",
+        info=True,
+        summary=(
+            "The 15-minute overcommit average is elevated. Overcommit is a planning signal, "
+            "not proof that the host is reclaiming memory or that guests are degraded."
         ),
         recommendation=(
             "Do not resize based on overcommit alone. Correlate with MCTLSZ, SWCUR, SWR/s, "
@@ -411,6 +512,84 @@ RULES: tuple[Rule, ...] = (
         refs=("esxtop_storage", "yellow_bricks"),
     ),
     Rule(
+        id="storage.gavg_rd",
+        metric="GAVG/rd",
+        title="Guest storage latency is elevated",
+        category="storage",
+        statistic="p95",
+        warn=10.0,
+        critical=25.0,
+        summary=(
+            "Guest read latency is elevated. GAVG is what the guest observes; split DAVG and "
+            "KAVG before blaming the array."
+        ),
+        recommendation=(
+            "Compare GAVG/rd with DAVG/rd and KAVG/rd. High DAVG/rd points to the array, SAN "
+            "or path; high KAVG/rd points to VMkernel queueing or the vSCSI path. A one-sided "
+            "read latency problem can also indicate a disabled array read cache."
+        ),
+        refs=("esxtop_storage", "yellow_bricks"),
+    ),
+    Rule(
+        id="storage.gavg_wr",
+        metric="GAVG/wr",
+        title="Guest storage latency is elevated",
+        category="storage",
+        statistic="p95",
+        warn=10.0,
+        critical=25.0,
+        summary=(
+            "Guest write latency is elevated. GAVG is what the guest observes; split DAVG and "
+            "KAVG before blaming the array."
+        ),
+        recommendation=(
+            "Compare GAVG/wr with DAVG/wr and KAVG/wr. High DAVG/wr points to the array, SAN "
+            "or path; high KAVG/wr points to VMkernel queueing or the vSCSI path. Check array "
+            "write cache and RAID write penalties as well."
+        ),
+        refs=("esxtop_storage", "yellow_bricks"),
+    ),
+    Rule(
+        id="storage.lat_rd",
+        metric="LAT/rd",
+        title="Guest storage latency is elevated",
+        category="storage",
+        statistic="p95",
+        warn=10.0,
+        critical=25.0,
+        summary=(
+            "Virtual-disk read latency is elevated. This is the latency the guest virtual disk "
+            "sees; it is a guest-visible symptom, not proof of the slow layer."
+        ),
+        recommendation=(
+            "Use the Disk VM, Disk Device and Disk Adapter panels together. Compare LAT/rd "
+            "with GAVG/rd, DAVG/rd and KAVG/rd, then check queue pressure, path health and "
+            "array read-cache policy. A high value with negligible read throughput may simply "
+            "reflect a very small sample."
+        ),
+        refs=("esxtop_storage", "vm_performance"),
+    ),
+    Rule(
+        id="storage.lat_wr",
+        metric="LAT/wr",
+        title="Guest storage latency is elevated",
+        category="storage",
+        statistic="p95",
+        warn=10.0,
+        critical=25.0,
+        summary=(
+            "Virtual-disk write latency is elevated. This is the latency the guest virtual disk "
+            "sees; it is a guest-visible symptom, not proof of the slow layer."
+        ),
+        recommendation=(
+            "Use the Disk VM, Disk Device and Disk Adapter panels together. Compare LAT/wr "
+            "with GAVG/wr, DAVG/wr and KAVG/wr, then check queue pressure, path health, array "
+            "write cache and RAID write penalties. A high value with negligible write "
+            "throughput may simply reflect a very small sample."
+        ),
+        refs=("esxtop_storage", "vm_performance"),
+    ),
+    Rule(
         id="storage.davg",
         metric="DAVG/cmd",
         title="Device storage latency is elevated",
@@ -425,6 +604,44 @@ RULES: tuple[Rule, ...] = (
         recommendation=(
             "Check array and SAN switch latency for the same device, path failover state, "
             "and whether the device is saturated. Compare read/write-specific DAVG."
+        ),
+        refs=("esxtop_storage", "yellow_bricks"),
+    ),
+    Rule(
+        id="storage.davg_rd",
+        metric="DAVG/rd",
+        title="Device storage latency is elevated",
+        category="storage",
+        statistic="p95",
+        warn=10.0,
+        critical=25.0,
+        summary=(
+            "Device read latency is high. A one-sided read problem can point at a disabled "
+            "array read cache, a degraded RAID set, a path issue, or an undersized backend."
+        ),
+        recommendation=(
+            "Compare DAVG/wr and DAVG/cmd, then check the array, SAN path and read-cache "
+            "policy. Use the read/write split to distinguish cache behaviour from overall "
+            "array saturation."
+        ),
+        refs=("esxtop_storage", "yellow_bricks"),
+    ),
+    Rule(
+        id="storage.davg_wr",
+        metric="DAVG/wr",
+        title="Device storage latency is elevated",
+        category="storage",
+        statistic="p95",
+        warn=10.0,
+        critical=25.0,
+        summary=(
+            "Device write latency is high. Write latency is commonly affected by array cache "
+            "policy, RAID write penalties, thin provisioning and backend saturation."
+        ),
+        recommendation=(
+            "Compare DAVG/rd and DAVG/cmd, then check array write cache, RAID state, thin "
+            "provisioning and SAN path health. Do not tune queue depth before confirming the "
+            "array can absorb more outstanding writes."
         ),
         refs=("esxtop_storage", "yellow_bricks"),
     ),
@@ -448,6 +665,44 @@ RULES: tuple[Rule, ...] = (
         refs=("esxtop_storage", "yellow_bricks"),
     ),
     Rule(
+        id="storage.kavg_rd",
+        metric="KAVG/rd",
+        title="VMkernel storage latency is elevated",
+        category="storage",
+        statistic="p95",
+        warn=2.0,
+        critical=5.0,
+        summary=(
+            "Read commands are spending significant time inside ESXi. High KAVG commonly means "
+            "queuing or a queue-depth mismatch rather than a slow array."
+        ),
+        recommendation=(
+            "Check QUED, ACTV, %USD, LOAD and the adapter/device queue depths. If the array "
+            "supports deeper queues and is not saturated, verify queue-depth tuning. Compare "
+            "KAVG/rd with KAVG/wr to see whether the pressure is read- or write-specific."
+        ),
+        refs=("esxtop_storage", "yellow_bricks"),
+    ),
+    Rule(
+        id="storage.kavg_wr",
+        metric="KAVG/wr",
+        title="VMkernel storage latency is elevated",
+        category="storage",
+        statistic="p95",
+        warn=2.0,
+        critical=5.0,
+        summary=(
+            "Write commands are spending significant time inside ESXi. High KAVG commonly means "
+            "queuing or a queue-depth mismatch rather than a slow array."
+        ),
+        recommendation=(
+            "Check QUED, ACTV, %USD, LOAD and the adapter/device queue depths. If the array "
+            "supports deeper queues and is not saturated, verify queue-depth tuning. Compare "
+            "KAVG/wr with KAVG/rd to see whether the pressure is read- or write-specific."
+        ),
+        refs=("esxtop_storage", "yellow_bricks"),
+    ),
+    Rule(
         id="storage.qavg",
         metric="QAVG/cmd",
         title="Storage queue latency is elevated",
@@ -459,6 +714,38 @@ RULES: tuple[Rule, ...] = (
         recommendation=(
             "Check outstanding commands (ACTV), queue usage, LOAD and array queue depth. "
             "A burst can be normal; sustained queue latency usually means saturation."
+        ),
+        refs=("esxtop_storage", "esxtop_metrics"),
+    ),
+    Rule(
+        id="storage.qavg_rd",
+        metric="QAVG/rd",
+        title="Storage queue latency is elevated",
+        category="storage",
+        statistic="p95",
+        warn=5.0,
+        critical=10.0,
+        summary="Read commands are waiting in the storage queue before service.",
+        recommendation=(
+            "Check outstanding reads (ACTV), queue usage, LOAD and array queue depth. Compare "
+            "QAVG/rd with QAVG/wr; a one-sided increase can reflect read-cache misses or a "
+            "read-heavy path bottleneck."
+        ),
+        refs=("esxtop_storage", "esxtop_metrics"),
+    ),
+    Rule(
+        id="storage.qavg_wr",
+        metric="QAVG/wr",
+        title="Storage queue latency is elevated",
+        category="storage",
+        statistic="p95",
+        warn=5.0,
+        critical=10.0,
+        summary="Write commands are waiting in the storage queue before service.",
+        recommendation=(
+            "Check outstanding writes (ACTV), queue usage, LOAD and array queue depth. Compare "
+            "QAVG/wr with QAVG/rd; a one-sided increase can reflect write-cache policy, RAID "
+            "write penalties or a write-heavy path bottleneck."
         ),
         refs=("esxtop_storage", "esxtop_metrics"),
     ),
@@ -594,6 +881,182 @@ RULES: tuple[Rule, ...] = (
             "and whether vmkernel.log reports repeated failures."
         ),
         refs=("yellow_bricks",),
+    ),
+    Rule(
+        id="storage.unmap_failed_rate",
+        metric="UNMAP_FAIL/s",
+        title="UNMAP operations are failing",
+        category="storage",
+        statistic="max",
+        warn=0.0001,
+        critical=None,
+        summary="Failed UNMAP operations are being reported for the virtual disk.",
+        recommendation=(
+            "Check whether the array supports UNMAP, whether the datastore is thin-provisioned, "
+            "and whether vmkernel.log reports repeated failures. A failed UNMAP is a health "
+            "signal, not a throughput threshold."
+        ),
+        refs=("esxtop_storage", "yellow_bricks"),
+    ),
+    Rule(
+        id="storage.unmap_failed_bytes",
+        metric="UNMAP_FAIL_MB/s",
+        title="UNMAP operations are failing",
+        category="storage",
+        statistic="max",
+        warn=0.0001,
+        critical=None,
+        summary="Data is passing through failed UNMAP operations.",
+        recommendation=(
+            "Check whether the array supports UNMAP, whether the datastore is thin-provisioned, "
+            "and whether vmkernel.log reports repeated failures. Correlate with UNMAP_FAIL/s "
+            "and DELETE_F."
+        ),
+        refs=("esxtop_storage", "yellow_bricks"),
+    ),
+    Rule(
+        id="storage.failed_commands",
+        metric="FCMDS/s",
+        title="Storage I/O failures are reported",
+        category="storage",
+        statistic="max",
+        warn=0.0001,
+        critical=None,
+        summary=_STORAGE_FAILURE_SUMMARY,
+        recommendation=_STORAGE_FAILURE_RECOMMENDATION,
+        refs=("esxtop_storage", "esxtop_metrics"),
+    ),
+    Rule(
+        id="storage.failed_reads",
+        metric="FREAD/s",
+        title="Storage I/O failures are reported",
+        category="storage",
+        statistic="max",
+        warn=0.0001,
+        critical=None,
+        summary=_STORAGE_FAILURE_SUMMARY,
+        recommendation=_STORAGE_FAILURE_RECOMMENDATION,
+        refs=("esxtop_storage", "esxtop_metrics"),
+    ),
+    Rule(
+        id="storage.failed_writes",
+        metric="FWRITE/s",
+        title="Storage I/O failures are reported",
+        category="storage",
+        statistic="max",
+        warn=0.0001,
+        critical=None,
+        summary=_STORAGE_FAILURE_SUMMARY,
+        recommendation=_STORAGE_FAILURE_RECOMMENDATION,
+        refs=("esxtop_storage", "esxtop_metrics"),
+    ),
+    Rule(
+        id="storage.failed_read_bytes",
+        metric="FMBRD/s",
+        title="Storage I/O failures are reported",
+        category="storage",
+        statistic="max",
+        warn=0.0001,
+        critical=None,
+        summary=_STORAGE_FAILURE_SUMMARY,
+        recommendation=_STORAGE_FAILURE_RECOMMENDATION,
+        refs=("esxtop_storage", "esxtop_metrics"),
+    ),
+    Rule(
+        id="storage.failed_write_bytes",
+        metric="FMBWR/s",
+        title="Storage I/O failures are reported",
+        category="storage",
+        statistic="max",
+        warn=0.0001,
+        critical=None,
+        summary=_STORAGE_FAILURE_SUMMARY,
+        recommendation=_STORAGE_FAILURE_RECOMMENDATION,
+        refs=("esxtop_storage", "esxtop_metrics"),
+    ),
+    Rule(
+        id="storage.failed_reserves",
+        metric="FRESV/s",
+        title="Storage I/O failures are reported",
+        category="storage",
+        statistic="max",
+        warn=0.0001,
+        critical=None,
+        summary=_STORAGE_FAILURE_SUMMARY,
+        recommendation=_STORAGE_FAILURE_RECOMMENDATION,
+        refs=("esxtop_storage", "esxtop_metrics"),
+    ),
+    Rule(
+        id="storage.failed_io",
+        metric="FAILED_IO",
+        title="Storage I/O failures are reported",
+        category="storage",
+        statistic="max",
+        warn=0.0001,
+        critical=None,
+        summary=_STORAGE_FAILURE_SUMMARY,
+        recommendation=_STORAGE_FAILURE_RECOMMENDATION,
+        refs=("esxtop_storage", "esxtop_metrics"),
+    ),
+    Rule(
+        id="storage.clone_failed",
+        metric="CLONE_F",
+        title="VAAI operations are failing",
+        category="storage",
+        statistic="max",
+        warn=0.0001,
+        critical=None,
+        summary=_VAAI_FAILURE_SUMMARY,
+        recommendation=_VAAI_FAILURE_RECOMMENDATION,
+        refs=("esxtop_storage", "yellow_bricks"),
+    ),
+    Rule(
+        id="storage.large_clone_failed",
+        metric="LCLONE_F",
+        title="VAAI operations are failing",
+        category="storage",
+        statistic="max",
+        warn=0.0001,
+        critical=None,
+        summary=_VAAI_FAILURE_SUMMARY,
+        recommendation=_VAAI_FAILURE_RECOMMENDATION,
+        refs=("esxtop_storage", "yellow_bricks"),
+    ),
+    Rule(
+        id="storage.extstats_failed",
+        metric="EXTSTATS_F",
+        title="VAAI operations are failing",
+        category="storage",
+        statistic="max",
+        warn=0.0001,
+        critical=None,
+        summary=_VAAI_FAILURE_SUMMARY,
+        recommendation=_VAAI_FAILURE_RECOMMENDATION,
+        refs=("esxtop_storage", "yellow_bricks"),
+    ),
+    Rule(
+        id="storage.resspace_failed",
+        metric="RESSPACE_F",
+        title="VAAI operations are failing",
+        category="storage",
+        statistic="max",
+        warn=0.0001,
+        critical=None,
+        summary=_VAAI_FAILURE_SUMMARY,
+        recommendation=_VAAI_FAILURE_RECOMMENDATION,
+        refs=("esxtop_storage", "yellow_bricks"),
+    ),
+    Rule(
+        id="storage.zero_failed",
+        metric="ZERO_F",
+        title="VAAI operations are failing",
+        category="storage",
+        statistic="max",
+        warn=0.0001,
+        critical=None,
+        summary=_VAAI_FAILURE_SUMMARY,
+        recommendation=_VAAI_FAILURE_RECOMMENDATION,
+        refs=("esxtop_storage", "yellow_bricks"),
     ),
     Rule(
         id="storage.vsan_lat",

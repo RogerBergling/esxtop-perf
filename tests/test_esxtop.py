@@ -8,12 +8,48 @@ from pathlib import Path
 from unittest.mock import patch
 
 from esxtop_perf import config
-from esxtop_perf.analysis import build_analysis
-from esxtop_perf.catalog import canonical_metric, group_family, infer_unit, metric_definition
+from esxtop_perf.analysis import RULES, build_analysis
+from esxtop_perf.catalog import METRIC_DEFS, canonical_metric, group_family, infer_unit, metric_definition
 from esxtop_perf.parser import CaptureError, _parse_vcpu_instance, _systemish, parse_capture
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "public" / "demo" / "esxtop-demo.csv"
+
+
+def _series(metric: str, value: float, *, statistic: str = "p95", scope: str = "vm", group: str = "Virtual Disk", unit: str = "ms", entity: str = "VM1") -> dict:
+    stats = {
+        "count": 3,
+        "min": value,
+        "max": value,
+        "avg": value,
+        "last": value,
+        "p05": value,
+        "p50": value,
+        "p95": value,
+    }
+    stats[statistic] = value
+    return {
+        "id": f"{metric}:{entity}:{scope}",
+        "metric": metric,
+        "counter": metric,
+        "kind": "numeric",
+        "scope": scope,
+        "group": group,
+        "groupInstance": entity,
+        "instance": entity,
+        "entity": entity,
+        "entityKind": "virtual disk" if scope == "vm" else "storage",
+        "vm": entity if scope == "vm" else "",
+        "host": "esxi01",
+        "unit": unit,
+        "category": "storage",
+        "stats": stats,
+    }
+
+
+def _analyze(*series: dict) -> dict:
+    return build_analysis({"series": list(series)})
+
 
 
 class ConfigLimitTests(unittest.TestCase):
@@ -131,6 +167,126 @@ class DemoAnalysisTests(unittest.TestCase):
             sum(item["series"] for item in categories.values()),
             len(self.doc["series"]),
         )
+
+
+class RuleCoverageTests(unittest.TestCase):
+    def test_new_storage_latency_rules_use_layer_guardrails(self) -> None:
+        cases = (
+            (("LAT/rd", "LAT/wr", "GAVG/rd", "GAVG/wr", "DAVG/rd", "DAVG/wr"), 10.0, 25.0),
+            (("KAVG/rd", "KAVG/wr"), 2.0, 5.0),
+            (("QAVG/rd", "QAVG/wr"), 5.0, 10.0),
+        )
+        for metrics, warn, critical in cases:
+            for metric in metrics:
+                with self.subTest(metric=metric, level="warning"):
+                    item = _analyze(_series(metric, warn))["series"][0]
+                    self.assertEqual(item["status"], "warn")
+                    self.assertEqual(item["threshold"], warn)
+                with self.subTest(metric=metric, level="critical"):
+                    item = _analyze(_series(metric, critical))["series"][0]
+                    self.assertEqual(item["status"], "critical")
+                    self.assertEqual(item["threshold"], critical)
+                with self.subTest(metric=metric, level="ok"):
+                    item = _analyze(_series(metric, warn / 2))["series"][0]
+                    self.assertEqual(item["status"], "ok")
+                    self.assertIsNone(item["threshold"])
+
+    def test_storage_latency_findings_group_split_and_combined(self) -> None:
+        document = _analyze(
+            _series("GAVG/cmd", 25.0),
+            _series("GAVG/rd", 25.0),
+            _series("LAT/rd", 25.0),
+        )
+        findings = [
+            finding for finding in document["findings"]
+            if finding["title"] == "Guest storage latency is elevated"
+        ]
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(len(findings[0]["seriesIds"]), 3)
+
+    def test_load_and_overcommit_variants_use_same_guardrails(self) -> None:
+        for metric in ("LOAD5", "LOAD15"):
+            for value, expected in ((1.0, "warn"), (2.0, "critical"), (0.5, "ok")):
+                with self.subTest(metric=metric, value=value):
+                    item = _analyze(
+                        _series(metric, value, scope="host", group="Physical Cpu Load", unit="", entity="esxi01")
+                    )["series"][0]
+                    self.assertEqual(item["status"], expected)
+
+        for metric in ("OVERCOMMIT1", "OVERCOMMIT5", "OVERCOMMIT15"):
+            for value, expected in ((1.0, "info"), (5.0, "info"), (0.5, "ok")):
+                with self.subTest(metric=metric, value=value):
+                    item = _analyze(
+                        _series(metric, value, scope="host", group="Memory", unit="", entity="esxi01")
+                    )["series"][0]
+                    self.assertEqual(item["status"], expected)
+                    self.assertIsNone(item["criticalThreshold"])
+
+    def test_hard_storage_failure_counters_are_never_healthy(self) -> None:
+        cases = (
+            ("FCMDS/s", "host", "Disk Device", "/s", "Storage I/O failures are reported"),
+            ("FREAD/s", "host", "Disk Device", "/s", "Storage I/O failures are reported"),
+            ("FWRITE/s", "host", "Disk Device", "/s", "Storage I/O failures are reported"),
+            ("FMBRD/s", "host", "Disk Device", "B/s", "Storage I/O failures are reported"),
+            ("FMBWR/s", "host", "Disk Device", "B/s", "Storage I/O failures are reported"),
+            ("FRESV/s", "host", "Disk Device", "/s", "Storage I/O failures are reported"),
+            ("FAILED_IO", "vm", "Virtual Disk", "", "Storage I/O failures are reported"),
+            ("UNMAP_FAIL/s", "vm", "Virtual Disk", "/s", "UNMAP operations are failing"),
+            ("UNMAP_FAIL_MB/s", "vm", "Virtual Disk", "MB/s", "UNMAP operations are failing"),
+            ("CLONE_F", "vm", "Virtual Disk", "", "VAAI operations are failing"),
+            ("LCLONE_F", "vm", "Virtual Disk", "", "VAAI operations are failing"),
+            ("EXTSTATS_F", "vm", "Virtual Disk", "", "VAAI operations are failing"),
+            ("RESSPACE_F", "vm", "Virtual Disk", "", "VAAI operations are failing"),
+            ("ZERO_F", "vm", "Virtual Disk", "", "VAAI operations are failing"),
+        )
+        for metric, scope, group, unit, expected_title in cases:
+            with self.subTest(metric=metric, value=1):
+                document = _analyze(
+                    _series(metric, 1.0, statistic="max", scope=scope, group=group, unit=unit)
+                )
+                self.assertEqual(document["series"][0]["status"], "warn")
+                self.assertTrue(any(finding["title"] == expected_title for finding in document["findings"]))
+            with self.subTest(metric=metric, value=0):
+                document = _analyze(
+                    _series(metric, 0.0, statistic="max", scope=scope, group=group, unit=unit)
+                )
+                self.assertEqual(document["series"][0]["status"], "ok")
+                self.assertEqual(document["findings"], [])
+
+    def test_workload_and_ambiguous_storage_metrics_stay_unruled(self) -> None:
+        cases = (
+            ("CMDS/s", 10000.0, "vm", "Virtual Disk", "/s"),
+            ("READS/s", 10000.0, "vm", "Virtual Disk", "/s"),
+            ("WRITES/s", 10000.0, "vm", "Virtual Disk", "/s"),
+            ("MBREAD/s", 1000.0, "vm", "Virtual Disk", "MB/s"),
+            ("MBWRTN/s", 1000.0, "vm", "Virtual Disk", "MB/s"),
+            ("ACTV", 512.0, "host", "Disk Device", ""),
+            ("TOTAL_IO", 999999.0, "vm", "Virtual Disk", ""),
+            ("VSCSI_LATENCY", 100.0, "vm", "Virtual Disk", "ms"),
+            ("SPLTCMD/s", 100.0, "host", "Disk Device", "/s"),
+            ("AQLEN", 1024.0, "host", "Disk Device", ""),
+        )
+        for metric, value, scope, group, unit in cases:
+            with self.subTest(metric=metric):
+                item = _analyze(
+                    _series(metric, value, scope=scope, group=group, unit=unit)
+                )["series"][0]
+                self.assertEqual(item["status"], "neutral")
+                self.assertEqual(item["statusText"], "No automatic threshold")
+
+    def test_rule_ids_and_metrics_are_catalogued(self) -> None:
+        ids = [rule.id for rule in RULES]
+        self.assertEqual(len(ids), len(set(ids)), "rule ids must be unique")
+        for rule in RULES:
+            with self.subTest(rule=rule.id):
+                self.assertIn(rule.metric, METRIC_DEFS)
+                self.assertTrue(rule.title)
+                self.assertTrue(rule.summary)
+                self.assertTrue(rule.recommendation)
+                self.assertTrue(rule.refs)
+        ruled_metrics = {rule.metric for rule in RULES}
+        for metric in ("CMDS/s", "READS/s", "WRITES/s", "MBREAD/s", "MBWRTN/s", "VSCSI_LATENCY"):
+            self.assertNotIn(metric, ruled_metrics)
 
 
 class ParserEdgeTests(unittest.TestCase):

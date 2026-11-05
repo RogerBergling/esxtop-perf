@@ -110,6 +110,9 @@ def main() -> int:
     check("ESXi 8.0 U3" in guide, "field guide must identify the real rc example as ESXi 8.0 U3")
     check("ESXi 6.0" not in guide, "field guide must not label the ESXi 8.0 U3 rc as ESXi 6.0")
     check("## 7. Storage counters" in guide, "field guide lacks storage section")
+    check("| Storage | `LAT/rd`, `LAT/wr` | 10 ms | 25 ms |" in guide, "field guide lacks the virtual-disk latency guardrail")
+    check("Workload counters (`CMDS/s`, `READS/s`, `WRITES/s`, `MBREAD/s`, `MBWRTN/s`)" in guide, "field guide must explain why workload counters are unruled")
+    check("`VSCSI_LATENCY` is also unruled" in guide, "field guide must explain why VSCSI_LATENCY is unruled")
     for url in (
         "https://knowledge.broadcom.com/external/article/382249/",
         "https://knowledge.broadcom.com/external/article/344099",
@@ -133,6 +136,7 @@ def main() -> int:
     check("### Field coverage and presence-aware views" in readme, "README lacks field coverage/presence documentation")
     check("### Upload password and public exposure" in readme, "README lacks upload-password security documentation")
     check("### Status semantics: Healthy, Warning, Critical, Info and No rule" in readme, "README lacks status semantics documentation")
+    check("Rule coverage is deliberately selective" in readme, "README lacks the curated rule-coverage explanation")
     for status in ("Healthy", "Warning", "Critical", "Info", "No rule"):
         check(status in readme, f"README lacks status definition: {status}")
     for phrase in ("Hosts + VMs", "Hosts only", "Selected VMs only", "metric-category checkboxes", "Interrupts", "filter the report capture-wide", "grouped by entity", "Only metrics present in the capture are rendered", "vSAN fields are emitted only when vSAN is enabled", "ESXTOP_UPLOAD_PASSWORD", "never embedded in the frontend"):
