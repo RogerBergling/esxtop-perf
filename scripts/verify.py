@@ -42,6 +42,7 @@ def main() -> int:
         "public/assets/css/app.css",
         "public/assets/js/app.js",
         "public/assets/js/theme-init.js",
+        "public/assets/js/version.js",
         "public/assets/js/pages.js",
         "public/assets/js/report.js",
         "public/assets/js/technical.js",
@@ -76,6 +77,12 @@ def main() -> int:
     check("/assets/js/app.js" in index, "index.html does not load the app module")
     check("ESXtop Lens" in index, "index.html title/brand missing")
     check("noscript" in index, "index.html should keep a noscript warning")
+    check("data-build-number" in index, "index.html lacks the build number slot")
+    check("data-live-clock" in index, "index.html lacks the live clock slot")
+
+    version_js = (ROOT / "public/assets/js/version.js").read_text(encoding="utf-8")
+    for marker in ("hourCycle: 'h23'", "data-build-number", "formatBuildDate", "buildNumber", "24-hour"):
+        check(marker in version_js, f"version.js missing build/clock marker: {marker}")
 
     # Local ES-module imports must resolve so a missing file fails CI, not the browser.
     import_pattern = re.compile(r"(?:from|import)\s+['\"](\.[^'\"]+)['\"]")
@@ -175,7 +182,7 @@ def main() -> int:
     for marker in ("ESXTOP_UPLOAD_PASSWORD", "upload_auth_required", "verify_upload_password", "hmac.compare_digest", "max_concurrent_analyses", "max_concurrent_requests", "request_timeout_seconds"):
         check(marker in config_py, f"config.py missing upload-password marker: {marker}")
     server_py = (ROOT / "esxtop_perf/server.py").read_text(encoding="utf-8")
-    for marker in ("UPLOAD_PASSWORD_HEADER", "_upload_auth_ok", "uploadAuthRequired", "status=401", "ANALYSIS_SLOTS", "status=429", "BoundedThreadingHTTPServer", "BUSY_RESPONSE", "request_timeout_seconds", "X-Robots-Tag", "/api/upload-auth"):
+    for marker in ("UPLOAD_PASSWORD_HEADER", "_upload_auth_ok", "uploadAuthRequired", "status=401", "ANALYSIS_SLOTS", "status=429", "BoundedThreadingHTTPServer", "BUSY_RESPONSE", "request_timeout_seconds", "X-Robots-Tag", "/api/upload-auth", "AUTH_FAILURE_LIMIT", "_auth_rate_limited"):
         check(marker in server_py, f"server.py missing upload-password marker: {marker}")
 
     parser_py = (ROOT / "esxtop_perf/parser.py").read_text(encoding="utf-8")

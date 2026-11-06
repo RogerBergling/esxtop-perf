@@ -16,6 +16,7 @@ import {
   renderVms,
   captureLine,
 } from './pages.js';
+import { applyBuildInfo, loadBuildInfo } from './version.js';
 
 const THEME_KEY = 'esxtop-lens-theme';
 const UPLOAD_PASSWORD_KEY = 'esxtop-lens-upload-password';
@@ -403,17 +404,8 @@ function escapeHtml(value) {
 }
 
 async function loadMetadata() {
-  try {
-    const response = await fetch('/version.json', { cache: 'no-store' });
-    if (!response.ok) return;
-    const version = await response.json();
-    document.querySelectorAll('[data-app-version]').forEach((element) => { element.textContent = version.version || 'dev'; });
-    document.querySelectorAll('[data-image-tag]').forEach((element) => { element.textContent = version.imageTag || 'local'; });
-    document.querySelectorAll('[data-commit]').forEach((element) => { element.textContent = String(version.commit || 'local').slice(0, 12); });
-    document.querySelectorAll('[data-build-date]').forEach((element) => { element.textContent = version.buildDate || 'local build'; });
-  } catch {
-    // Local first, metadata optional.
-  }
+  const info = await loadBuildInfo();
+  applyBuildInfo(document, info);
   try {
     const health = await fetch('/api/health', { cache: 'no-store' }).then((response) => response.json());
     state.health = health;

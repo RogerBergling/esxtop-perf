@@ -604,6 +604,8 @@ table.data tr.clickable:hover td.name a { text-decoration: underline; }
 .footer p { margin: 0 0 .35rem; }
 .footer-dim { color: var(--dim); font-size: .7rem; }
 .build-stamp { word-break: break-word; }
+.build-stamp a { color: inherit; }
+.build-stamp time { font-family: var(--mono); color: var(--text-soft); }
 .error-banner { display: flex; gap: .6rem; align-items: start; border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); background: color-mix(in srgb, var(--danger) 8%, transparent); border-radius: 10px; padding: .7rem .85rem; font-size: .8rem; color: var(--text-soft); margin-bottom: 1rem; }
 .error-banner .icon { color: var(--danger); margin-top: .1rem; }
 

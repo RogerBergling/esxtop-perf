@@ -302,6 +302,34 @@ class UploadPasswordSmokeTests(unittest.TestCase):
                     payload = json.loads(response.read().decode("utf-8"))
                     self.assertTrue(payload["ok"])
 
+    def test_zz_upload_password_rate_limit(self) -> None:
+        """Repeated wrong passwords must throttle before a correct one is tried."""
+        throttled = False
+        for _ in range(10):
+            request = urllib.request.Request(
+                f"{self.base}/api/upload-auth",
+                headers={"X-ESXTOP-Upload-Password": "definitely-wrong"},
+            )
+            try:
+                self.opener.open(request, timeout=20)
+            except urllib.error.HTTPError as error:
+                if error.code == 429:
+                    self.assertEqual(error.headers.get("Retry-After"), "60")
+                    throttled = True
+                    error.close()
+                    break
+                self.assertEqual(error.code, 401)
+                error.close()
+        self.assertTrue(throttled, "wrong passwords were never rate-limited")
+        request = urllib.request.Request(
+            f"{self.base}/api/upload-auth",
+            headers={"X-ESXTOP-Upload-Password": "smoke-secret"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.opener.open(request, timeout=20)
+        self.assertEqual(context.exception.code, 429)
+        context.exception.close()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

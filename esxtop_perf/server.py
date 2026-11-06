@@ -48,7 +48,9 @@ SECURITY_HEADERS = {
         "object-src 'none'; "
         "base-uri 'none'; "
         "frame-ancestors 'none'; "
-        "form-action 'self'"
+        "frame-src 'none'; "
+        "worker-src 'none'; "
+        "form-action 'none'"
     ),
     "Referrer-Policy": "no-referrer",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
@@ -70,6 +72,10 @@ BUSY_RESPONSE = (
 SESSIONS = SessionStore()
 UPLOAD_PASSWORD_HEADER = "X-ESXTOP-Upload-Password"
 ANALYSIS_SLOTS = threading.BoundedSemaphore(config.max_concurrent_analyses())
+AUTH_FAILURE_LIMIT = 5
+AUTH_FAILURE_WINDOW_SECONDS = 60
+AUTH_FAILURES: dict[str, list[float]] = {}
+AUTH_FAILURES_LOCK = threading.Lock()
 
 
 def _json_bytes(document: dict) -> bytes:
@@ -282,11 +288,52 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             traceback.print_exc()
             self._send_json({"ok": False, "error": "The requested series could not be loaded."}, status=500)
 
+    def _client_ip(self) -> str:
+        return str(self.client_address[0]) if self.client_address else "unknown"
+
+    def _auth_rate_limited(self) -> bool:
+        ip = self._client_ip()
+        now = time.monotonic()
+        with AUTH_FAILURES_LOCK:
+            failures = [
+                stamp
+                for stamp in AUTH_FAILURES.get(ip, [])
+                if now - stamp < AUTH_FAILURE_WINDOW_SECONDS
+            ]
+            AUTH_FAILURES[ip] = failures
+            return len(failures) >= AUTH_FAILURE_LIMIT
+
+    def _record_auth_failure(self) -> None:
+        ip = self._client_ip()
+        now = time.monotonic()
+        with AUTH_FAILURES_LOCK:
+            failures = [
+                stamp
+                for stamp in AUTH_FAILURES.get(ip, [])
+                if now - stamp < AUTH_FAILURE_WINDOW_SECONDS
+            ]
+            failures.append(now)
+            AUTH_FAILURES[ip] = failures[-AUTH_FAILURE_LIMIT:]
+
+    def _clear_auth_failures(self) -> None:
+        with AUTH_FAILURES_LOCK:
+            AUTH_FAILURES.pop(self._client_ip(), None)
+
     def _upload_auth_ok(self) -> bool:
         if not config.upload_auth_required():
             return True
+        if self._auth_rate_limited():
+            self.close_connection = True
+            self._send_json(
+                {"ok": False, "error": "Too many attempts. Wait a minute and try again."},
+                status=429,
+                extra_headers=[("Retry-After", str(AUTH_FAILURE_WINDOW_SECONDS))],
+            )
+            return False
         if config.verify_upload_password(self.headers.get(UPLOAD_PASSWORD_HEADER)):
+            self._clear_auth_failures()
             return True
+        self._record_auth_failure()
         self.close_connection = True
         self._send_json(
             {"ok": False, "error": "Upload password required or incorrect."},
@@ -352,11 +399,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 with contextlib.suppress(OSError):
                     Path(temporary_path).unlink()
 
-    def _send_json(self, document: dict, status: int = 200) -> None:
+    def _send_json(
+        self,
+        document: dict,
+        status: int = 200,
+        extra_headers: list[tuple[str, str]] | None = None,
+    ) -> None:
         payload = json.dumps(document, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
-        self._send_bytes(payload, "application/json; charset=utf-8", status=status, compress=True)
+        self._send_bytes(
+            payload,
+            "application/json; charset=utf-8",
+            status=status,
+            compress=True,
+            extra_headers=extra_headers,
+        )
 
-    def _send_bytes(self, payload: bytes, content_type: str, status: int = 200, compress: bool = False) -> None:
+    def _send_bytes(
+        self,
+        payload: bytes,
+        content_type: str,
+        status: int = 200,
+        compress: bool = False,
+        extra_headers: list[tuple[str, str]] | None = None,
+    ) -> None:
         body = payload
         encoding = None
         if compress and len(payload) > 1024 and "gzip" in self.headers.get("Accept-Encoding", "").lower():
@@ -365,6 +430,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        for name, value in extra_headers or []:
+            self.send_header(name, value)
         if encoding:
             self.send_header("Content-Encoding", encoding)
             self.send_header("Vary", "Accept-Encoding")
@@ -373,7 +440,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(body)
 
     def log_message(self, fmt: str, *args) -> None:
-        sys.stderr.write("  %s\n" % (fmt % args))
+        message = "".join(
+            char if char.isprintable() else " "
+            for char in (fmt % args)
+        )
+        if len(message) > 512:
+            message = f"{message[:509]}..."
+        sys.stderr.write("  %s\n" % message)
 
 
 def port_available(host: str, port: int) -> bool:

@@ -33,7 +33,7 @@ Then run `docker compose up -d` again.
 
 ### 3. Open it and try it
 
-Open **http://localhost:8004** in your browser.
+Open **http://localhost:8007** in your browser.
 
 - Click **Load demo capture** to explore the app immediately with synthetic data.
 - Or drag a real `.csv` / `.csv.gz` esxtop capture onto the import page.
@@ -94,7 +94,7 @@ curl -O https://raw.githubusercontent.com/RogerBergling/esxtop-perf/main/compose
 docker compose up -d
 ```
 
-Open **http://localhost:8004** and drop in a capture, or click **Load demo capture**. The Compose port is bound to **127.0.0.1** by default. To expose it on the LAN, set `ESXTOP_UPLOAD_PASSWORD` in `.env`, change the Compose port mapping to `8004:8080`, and use HTTPS/reverse-proxy authentication; see [Upload password and public exposure](#upload-password-and-public-exposure).
+Open **http://localhost:8007** and drop in a capture, or click **Load demo capture**. The Compose port is bound to **127.0.0.1** by default. To expose it on the LAN, set `ESXTOP_UPLOAD_PASSWORD` in `.env`, change the Compose port mapping to `8007:8080`, and use HTTPS/reverse-proxy authentication; see [Upload password and public exposure](#upload-password-and-public-exposure).
 
 If GHCR returns an authentication error, the package is still private. Authenticate with a token that has `read:packages`:
 
@@ -109,7 +109,7 @@ Update manually:
 ```bash
 docker compose pull
 docker compose up -d --force-recreate
-curl -s http://localhost:8004/version.json | python3 -m json.tool
+curl -s http://localhost:8007/version.json | python3 -m json.tool
 ```
 
 The Compose file does **not** mount `/var/run/docker.sock` and does **not** include an automatic-update sidecar. Update deliberately with the commands above. If you use an external updater, secure it separately; ESXtop Lens does not ship one.
@@ -182,7 +182,7 @@ A quick password/proxy check from the machine running the browser:
 
 ```bash
 curl -i -H "X-ESXTOP-Upload-Password: YOUR_PASSWORD" \
-  http://localhost:8004/api/upload-auth
+  http://localhost:8007/api/upload-auth
 ```
 
 `200` means the password and proxy header path work. `401` means the password is wrong or the proxy strips the header. A connection error means the server/port is not reachable.
@@ -191,7 +191,7 @@ curl -i -H "X-ESXTOP-Upload-Password: YOUR_PASSWORD" \
 
 ```bash
 docker build \
-  --build-arg APP_VERSION=1.8.4 \
+  --build-arg APP_VERSION=1.8.5 \
   --build-arg IMAGE_TAG=local \
   --build-arg GIT_SHA="$(git rev-parse --short HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -216,6 +216,23 @@ There is no bundler, framework, CDN, external font or runtime dependency.
 | Delivery | GitHub Actions → GHCR, Compose | Multi-arch image publishing without Docker socket exposure |
 
 Node is not required to run the app. It is used only in CI for `node --check`.
+
+### Build metadata and clock
+
+The footer on every page shows the same deployment stamp:
+
+```text
+Version 1.8.5 · build 20261106.0030 · image latest · commit 1a2b3c4d5e6f
+· built 2026-11-06 00:30 UTC · 2026-11-06 01:30:00 CET · version.json
+```
+
+- **Version** comes from `public/version.json`, baked by the Docker build.
+- **Build** is derived from `buildDate` as the UTC timestamp `YYYYMMDD.HHMM`.
+- **Built** is always shown in UTC with a 24-hour clock.
+- **The live clock** uses the visitor's local timezone and is forced to a 24-hour cycle, independent of the browser locale.
+- Local runs without build metadata show `dev`, `local` and `local build`.
+
+The ESXtop Lens host port is **8007** by default. Port 8004 belongs to HAProxy Workbench, BIND Workbench uses 8005, the app portal uses 8006 and Learning Lab uses 8003, so the local Compose projects do not collide.
 
 ## Architecture
 
@@ -258,6 +275,7 @@ esxtop-perf/
 │   │   ├── css/app.css     Design system, responsive and print styles
 │   │   └── js/
 │   │       ├── app.js      Hash router, theme, upload lifecycle
+│   │       ├── version.js  Build metadata, 24-hour clock and build formatting
 │   │       ├── theme-init.js Pre-paint local theme
 │   │       ├── pages.js    Overview, category pages, VM, insights, explorer, report view
 │   │       ├── report.js   Standalone HTML report and print-to-PDF export
@@ -445,7 +463,7 @@ The current all-metric defaults admit captures up to 200,000 metric columns:
 | Cells per value request | 5,000,000 | `ESXTOP_MAX_REQUEST_CELLS` |
 | Upload password | unset (no gate) | `ESXTOP_UPLOAD_PASSWORD` |
 
-When `ESXTOP_UPLOAD_PASSWORD` is set, `POST /api/analyze` requires the matching `X-ESXTOP-Upload-Password` header. The browser import page prompts for it and keeps it in `sessionStorage` for the tab. The password is compared server-side with a constant-time comparison and is never embedded in the frontend bundle.
+When `ESXTOP_UPLOAD_PASSWORD` is set, `POST /api/analyze` requires the matching `X-ESXTOP-Upload-Password` header. The browser import page prompts for it and keeps it in `sessionStorage` for the tab. The password is compared server-side with a constant-time comparison and is never embedded in the frontend bundle. Five failed attempts from one client IP within 60 seconds return **429** with `Retry-After: 60` until the window expires, so the password cannot be brute-forced at full request speed. Behind a reverse proxy all requests appear to come from the proxy address, so the throttle is shared; add proxy-level rate limiting as well.
 
 Only `ESXTOP_MAX_CONCURRENT_ANALYSES` uploads are parsed at once (default **1**). A second upload receives **429** rather than competing for memory with a large analysis. Raise this only when the container has enough RAM and `/tmp` for multiple simultaneous captures.
 
@@ -552,7 +570,7 @@ ghcr.io/rogerbergling/esxtop-perf
 | --- | --- |
 | Push to `main` | `latest`, `main`, `sha-<short>` |
 | Push to another branch | `<branch>`, `sha-<short>` |
-| Tag `v1.8.4` | `v1.8.4`, `sha-<short>` |
+| Tag `v1.8.5` | `v1.8.5`, `sha-<short>` |
 | Manual run | Tags for the selected ref |
 
 No repository secrets are required; the workflow uses `GITHUB_TOKEN`. A new GHCR package is private by default. Make it public once, or authenticate the host with `read:packages`.
@@ -560,7 +578,7 @@ No repository secrets are required; the workflow uses `GITHUB_TOKEN`. A new GHCR
 Verify a running container:
 
 ```bash
-curl -s http://localhost:8004/version.json | python3 -m json.tool
+curl -s http://localhost:8007/version.json | python3 -m json.tool
 
 docker inspect ghcr.io/rogerbergling/esxtop-perf:latest \
   --format '{{index .Config.Labels "io.esxtoplens.build.version"}} {{index .Config.Labels "io.esxtoplens.build.image-tag"}} {{index .Config.Labels "io.esxtoplens.build.revision"}} {{index .Config.Labels "io.esxtoplens.build.date"}}'

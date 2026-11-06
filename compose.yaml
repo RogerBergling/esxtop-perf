@@ -9,9 +9,9 @@ services:
     memswap_limit: 2g           # same as mem_limit = no swap
     ports:
       # Loopback-only by default. To expose on the LAN, set
-      # ESXTOP_UPLOAD_PASSWORD in .env, change this to "8004:8080", and put
+      # ESXTOP_UPLOAD_PASSWORD in .env, change this to "8007:8080", and put
       # HTTPS/reverse-proxy authentication in front. See README.
-      - "127.0.0.1:8004:8080"
+      - "127.0.0.1:8007:8080"
     restart: unless-stopped
     pull_policy: always
     read_only: true

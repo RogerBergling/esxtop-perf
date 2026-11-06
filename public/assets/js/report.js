@@ -884,7 +884,11 @@ export function reportBody(doc, scope = {}) {
       : selectedHosts.length > 1
         ? `${selectedHosts.length} selected hosts · capture report`
         : (selectedHosts[0] || meta.host || 'ESXi host');
-  const generated = new Date().toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  const generated = new Date().toLocaleString('en-GB', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    hourCycle: 'h23',
+  });
   const technical = reportTechnical(findings, categories, doc);
   const hostSections = detailHosts.map((host) => `<section class="report-section">
       <h2>Host snapshot${detailHosts.length > 1 ? ` · ${esc(host)}` : ''}</h2>
