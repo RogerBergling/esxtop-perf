@@ -4,6 +4,45 @@ from __future__ import annotations
 
 import hmac
 import os
+from pathlib import Path
+
+
+def _load_env_file(path: str | Path | None = None) -> None:
+    """Load simple KEY=VALUE entries from ``.env`` for direct start.py runs.
+
+    Compose reads ``.env`` for interpolation on its own. This loader gives the
+    same behaviour when the app is started with ``python3 start.py`` or a
+    service manager. Real environment variables always win.
+    """
+
+    env_path = Path(path) if path is not None else Path(__file__).resolve().parent.parent / ".env"
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        entry = line.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        if entry.startswith("export "):
+            entry = entry[7:].lstrip()
+        key, separator, value = entry.partition("=")
+        key = key.strip()
+        if not separator or not key.isidentifier():
+            continue
+        value = value.strip()
+        if value[:1] in ("'", '"'):
+            quote = value[0]
+            end = value.find(quote, 1)
+            value = value[1:end] if end != -1 else value[1:]
+        else:
+            comment = value.find(" #")
+            if comment != -1:
+                value = value[:comment].rstrip()
+        os.environ.setdefault(key, value)
+
+
+_load_env_file()
 
 
 def _int(name: str, default: int, minimum: int = 1) -> int:

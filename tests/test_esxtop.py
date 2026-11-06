@@ -4,6 +4,7 @@ import gzip
 import os
 import tempfile
 import unittest
+from array import array
 from pathlib import Path
 from unittest.mock import patch
 
@@ -80,6 +81,21 @@ class ConfigLimitTests(unittest.TestCase):
             self.assertEqual(config.max_concurrent_requests(), 32)
             self.assertEqual(config.request_timeout_seconds(), 120)
 
+    def test_dotenv_loader_supports_quotes_and_environment_precedence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".env"
+            path.write_text(
+                "# comment\n"
+                "export ESXTOP_DOTENV_ONE=123\n"
+                'ESXTOP_DOTENV_TWO="hello world" # trailing comment\n'
+                "ESXTOP_DOTENV_ONE=fromfile\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"ESXTOP_DOTENV_ONE": "fromenv"}, clear=False):
+                config._load_env_file(path)
+                self.assertEqual(os.environ["ESXTOP_DOTENV_ONE"], "fromenv")
+                self.assertEqual(os.environ["ESXTOP_DOTENV_TWO"], "hello world")
+
     def test_upload_password_gate(self) -> None:
         with patch.dict(os.environ, {"ESXTOP_UPLOAD_PASSWORD": "correct horse battery staple"}):
             self.assertTrue(config.upload_auth_required())
@@ -153,6 +169,12 @@ class DemoAnalysisTests(unittest.TestCase):
         self.assertTrue(text)
         self.assertTrue(all(item["stats"]["count"] == 0 for item in text))
         self.assertTrue(any("Link Up?" in item["counter"] for item in text))
+
+    def test_numeric_series_use_compact_arrays(self) -> None:
+        numeric = [item for item in self.parsed["series"] if item["kind"] == "numeric"]
+        self.assertTrue(numeric)
+        self.assertTrue(all(isinstance(item["values"], array) for item in numeric))
+        self.assertTrue(all(item["values"].typecode == "d" for item in numeric))
 
     def test_category_counts_are_consistent(self) -> None:
         categories = self.doc["summary"]["categories"]

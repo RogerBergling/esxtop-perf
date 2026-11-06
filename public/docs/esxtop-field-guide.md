@@ -66,21 +66,23 @@ Sample arrays are not sent to the browser with the first response. The parser st
 
 ### Sizing large captures
 
-The defaults are safety guardrails, not a statement about available RAM. A ~145k-column × 100-sample capture measured about **1.23 GiB peak RSS**. A useful planning formula is:
+The defaults are safety guardrails, not a statement about available RAM. Sample values are stored as compact 8-byte doubles and session blobs are compressed. A useful planning formula is:
 
 ```text
-peak memory ≈ 0.6 GB fixed overhead + data cells × 48 bytes
+peak memory ≈ 0.5 GB fixed overhead + data cells × 8 bytes
 ```
 
 | Capture at ~145k columns | Data cells | Approx. peak |
 |---|---:|---:|
-| 100 samples | 14.6M | ~1.3 GB |
-| 300 samples | 43.9M | ~2.6 GB |
-| 500 samples | 73.1M | ~3.9 GB |
-| 683 samples | 99.9M | ~5.1 GB |
-| 1,000 samples | 146M | ~7.2 GB |
-| 1,200 samples | 175M | ~8.5 GB |
-| 1,400 samples | 205M | ~10 GB — too close |
+| 100 samples | 14.6M | ~0.7 GB |
+| 300 samples | 43.9M | ~0.9 GB |
+| 500 samples | 73.1M | ~1.1 GB |
+| 683 samples | 99.9M | ~1.4 GB |
+| 1,000 samples | 146M | ~1.7 GB |
+| 1,200 samples | 175M | ~2.0 GB |
+| 1,400 samples | 205M | ~2.2 GB |
+
+As a measured reference, a 54,474-column × 1,000-sample capture (346 MB raw CSV, 54.5M cells) completed the HTTP analysis in about 33 seconds with a peak RSS of about **0.75 GB**.
 
 The estimate covers parsing, analysis and the temporary SQLite session. It does not include browser memory. Leave 20–30% headroom below the container memory limit.
 
@@ -93,7 +95,7 @@ At 145,663 columns, the cell limit determines the sample count:
 | 80,000,000 | 546 |
 | 100,000,000 | 683 |
 | 150,000,000 | 1,025 |
-| 200,000,000 | 1,367 — not recommended with 10 GB |
+| 200,000,000 | 1,367 — upper documented range |
 
 **Giving the container more memory does not raise `ESXTOP_MAX_CELLS`.** You must change both the memory limit and the cell guardrail.
 
@@ -101,22 +103,22 @@ Recommended starting points:
 
 | Container memory | `ESXTOP_MAX_CELLS` | Expected peak | Notes |
 |---:|---:|---:|---|
-| 2 GB | 20,000,000 | ~1.6 GB | Current default; tight for long captures |
-| 4 GB | 40,000,000 | ~2.6 GB | Small single-user box |
-| 8 GB | 80,000,000 | ~4.4 GB | Good headroom |
-| 10 GB | 100,000,000 | ~5.4 GB | Comfortable |
-| 10 GB | 150,000,000 | ~7.8 GB | Upper safe range; monitor |
+| 2 GB | 20,000,000 | ~0.7 GB | Current default; conservative |
+| 2 GB | 100,000,000 | ~1.4 GB | Fits with headroom |
+| 4 GB | 150,000,000 | ~1.8 GB | Comfortable |
+| 4 GB | 200,000,000 | ~2.2 GB | Upper documented range |
+| 8 GB | 200,000,000 | ~2.2 GB | Extra headroom for concurrency |
 
-A 10 GB Compose example:
+A 4 GB Compose example:
 
 ```yaml
 services:
   esxtop-lens:
-    mem_limit: 10g
-    mem_reservation: 1g
-    memswap_limit: 10g
+    mem_limit: 4g
+    mem_reservation: 512m
+    memswap_limit: 4g
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=6g
+      - /tmp:rw,noexec,nosuid,size=4g
     environment:
       ESXTOP_MAX_SERIES: "200000"
       ESXTOP_MAX_CELLS: "100000000"
@@ -127,7 +129,7 @@ services:
 
 Also account for:
 
-- **Restart required:** set these values in the Compose environment or `.env`, then recreate the container. A running process keeps the limits it read at startup.
+- **Restart required:** set these values in the Compose environment or `.env`, then recreate the container. A running process keeps the limits it read at startup. `start.py` reads a project-root `.env` automatically; real environment variables take precedence.
 - **Columns:** `ESXTOP_MAX_SERIES` is 200,000; the observed 145,663-column capture fits. Raise it only for a wider capture.
 - **Rows:** `ESXTOP_MAX_ROWS` is 50,000. At 146k columns the cell limit binds long before this; it matters mainly for narrow captures.
 - **`/tmp`:** the temporary upload and SQLite session both live there. The default 2 GB tmpfs is not enough for a 100M-cell capture; use 4–6 GB.

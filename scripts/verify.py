@@ -109,7 +109,7 @@ def main() -> int:
     check("There is no separate Datastore panel" in guide, "field guide must explain that Datastore is not an esxtop panel")
     check("ABCDEfGHIJkl" in guide, "field guide lacks the annotated .esxtop60rc example")
     check("### Sizing large captures" in guide, "field guide lacks large-capture sizing guidance")
-    check("1.23 GiB" in guide, "field guide lacks the measured memory baseline")
+    check("0.75 GB" in guide, "field guide lacks the measured memory baseline")
     check("ESXTOP_MAX_CELLS: \"100000000\"" in guide, "field guide lacks the 10 GB / 100M-cell example")
     check("### Core counter relationships" in guide, "field guide lacks core counter relationships")
     check("GAVG = DAVG + KAVG" in guide, "field guide lacks the storage latency relationship")
@@ -135,7 +135,7 @@ def main() -> int:
     for phrase in ("The easy way to get it running", "Detailed setup", "Docker", "GHCR", "Validation", "Project structure"):
         check(phrase.lower() in readme.lower(), f"README is missing section/keyword: {phrase}")
     check("### Sizing large captures" in readme, "README lacks large-capture sizing guidance")
-    check("peak memory ≈ 0.6 GB" in readme, "README lacks the memory sizing formula")
+    check("peak memory ≈ 0.5 GB" in readme, "README lacks the memory sizing formula")
     check("## Reports" in readme, "README lacks the report documentation")
     check("## Reports" in readme and "What to do next" in readme, "README lacks the report action-plan documentation")
     check("ghcr.io/rogerbergling/esxtop-perf" in readme, "README does not name the GHCR image")

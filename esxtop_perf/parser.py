@@ -8,6 +8,7 @@ import io
 import math
 import re
 import statistics
+from array import array
 from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -169,21 +170,29 @@ def _parse_timestamp(value: str) -> datetime | None:
         return None
 
 
+_MISSING_NUMBERS = frozenset({"n/a", "na", "nan", "null", "none", "-", "--"})
+_NAN = float("nan")
+
+
 def _parse_number(value: str) -> float | str | None:
     raw = value.strip()
     if raw == "":
         return None
-    lowered = raw.lower()
-    if lowered in {"n/a", "na", "nan", "null", "none", "-", "--"}:
-        return None
-    # Counter values sometimes use a localised decimal comma inside quotes.
-    candidate = raw.replace(" ", "")
-    if "," in candidate and "." not in candidate:
-        candidate = candidate.replace(",", ".")
+    # esxtop captures are overwhelmingly numeric. Try the direct conversion
+    # first so the common path avoids lower-casing and replacing every cell.
     try:
-        number = float(candidate)
+        number = float(raw)
     except ValueError:
-        return raw
+        if raw.lower() in _MISSING_NUMBERS:
+            return None
+        # Counter values sometimes use a localised decimal comma inside quotes.
+        candidate = raw.replace(" ", "")
+        if "," in candidate and "." not in candidate:
+            candidate = candidate.replace(",", ".")
+        try:
+            number = float(candidate)
+        except ValueError:
+            return raw
     if not math.isfinite(number):
         return None
     return number
@@ -369,9 +378,14 @@ def _entity_for(header: dict[str, str]) -> dict[str, str]:
     }
 
 
-def _stats(values: list[Any]) -> dict[str, float | int | None]:
-    numbers = [float(value) for value in values if isinstance(value, (int, float))]
-    if not numbers:
+def _stats(values: Any, missing: int = 0) -> dict[str, float | int | None]:
+    """Summarise a numeric column stored as an ``array('d')``.
+
+    ``missing`` is the number of NaN placeholders, so the common all-numeric
+    path can sort the compact array without first building another list.
+    """
+
+    if not values or missing >= len(values):
         return {
             "count": 0,
             "min": None,
@@ -383,6 +397,12 @@ def _stats(values: list[Any]) -> dict[str, float | int | None]:
             "first": None,
             "last": None,
         }
+    if missing:
+        numbers = [value for value in values if not math.isnan(value)]
+        if not numbers:
+            return _stats([])
+    else:
+        numbers = values
     ordered = sorted(numbers)
     p05 = _percentile(ordered, 0.05)
     p95 = _percentile(ordered, 0.95)
@@ -483,20 +503,30 @@ def parse_capture(path: str | Path, filename: str) -> dict[str, Any]:
                 )
 
             host = max(host_counts, key=host_counts.get) if host_counts else ""
-            values: list[list[Any]] = [[] for _ in active_columns]
-            numeric_counts = [0] * len(active_columns)
-            text_counts = [0] * len(active_columns)
+            column_count = len(active_columns)
+            source_indices = [item[0] for item in active_columns]
+            # Store numeric samples in an array('d') instead of a Python list.
+            # A 54k-column capture otherwise creates 54 million boxed floats.
+            # Text is rare in esxtop output, so only allocate a bucket when a
+            # column actually contains a non-numeric value.
+            values: list[array] = [array("d") for _ in range(column_count)]
+            text_cells: list[dict[int, str] | None] = [None] * column_count
+            numeric_counts = [0] * column_count
+            text_counts = [0] * column_count
+            missing_counts = [0] * column_count
             raw_times: list[str] = []
             parsed_times: list[datetime | None] = []
             mismatched_rows = 0
             blank_rows = 0
             expected_length = len(raw_header)
+            parse_number = _parse_number
 
             for row in rows:
                 if not row or not any(cell.strip() for cell in row):
                     blank_rows += 1
                     continue
-                if len(row) != expected_length:
+                row_length = len(row)
+                if row_length != expected_length:
                     mismatched_rows += 1
                 if len(raw_times) >= max_rows:
                     raise CaptureError(
@@ -504,23 +534,35 @@ def parse_capture(path: str | Path, filename: str) -> dict[str, Any]:
                         "raise ESXTOP_MAX_ROWS, reduce -n, or split the capture.",
                         status=413,
                     )
-                if (len(raw_times) + 1) * len(active_columns) > max_cells:
+                if (len(raw_times) + 1) * column_count > max_cells:
                     raise CaptureError(
                         "This capture is larger than the configured parser limit "
                         f"({max_cells:,} data cells). Raise ESXTOP_MAX_CELLS, "
                         "reduce the number of iterations or capture fewer fields.",
                         status=413,
                     )
-                raw_times.append(row[0] if row else "")
-                parsed_times.append(_parse_timestamp(row[0] if row else ""))
-                for column_index, (source_index, _header, _metric, _entity) in enumerate(active_columns):
-                    cell = row[source_index] if source_index < len(row) else ""
-                    parsed = _parse_number(cell)
-                    values[column_index].append(parsed)
-                    if isinstance(parsed, (int, float)):
+                # Pad truncated rows once so the hot column loop needs no bounds
+                # check for every one of the millions of cells.
+                if row_length < expected_length:
+                    row = row + [""] * (expected_length - row_length)
+                sample_index = len(raw_times)
+                raw_times.append(row[0])
+                parsed_times.append(_parse_timestamp(row[0]))
+                for column_index, source_index in enumerate(source_indices):
+                    parsed = parse_number(row[source_index])
+                    if parsed is None:
+                        values[column_index].append(_NAN)
+                        missing_counts[column_index] += 1
+                    elif isinstance(parsed, float):
+                        values[column_index].append(parsed)
                         numeric_counts[column_index] += 1
-                    elif isinstance(parsed, str):
+                    else:
+                        values[column_index].append(_NAN)
                         text_counts[column_index] += 1
+                        bucket = text_cells[column_index]
+                        if bucket is None:
+                            bucket = text_cells[column_index] = {}
+                        bucket[sample_index] = parsed
 
             if not raw_times:
                 raise CaptureError("The capture contains a header but no samples.", status=422)
@@ -550,16 +592,31 @@ def parse_capture(path: str | Path, filename: str) -> dict[str, Any]:
             duration = elapsed[-1] if elapsed else None
 
             series: list[dict[str, Any]] = []
+            sample_count = len(raw_times)
             for column_index, (source_index, header, metric, entity) in enumerate(active_columns):
                 definition = metric["definition"]
-                kind = "numeric" if numeric_counts[column_index] >= text_counts[column_index] and numeric_counts[column_index] else "text"
-                series_values = values[column_index]
-                if kind == "text":
-                    cleaned = [value if isinstance(value, str) else None for value in series_values]
-                    stats = _stats([])
+                numeric = numeric_counts[column_index] >= text_counts[column_index] and numeric_counts[column_index] > 0
+                if numeric:
+                    kind = "numeric"
+                    cleaned: Any = values[column_index]
+                    # Text cells in a mostly numeric column are represented as
+                    # NaN too, so include them in the missing count.
+                    stats = _stats(
+                        cleaned,
+                        missing_counts[column_index] + text_counts[column_index],
+                    )
                 else:
-                    cleaned = [value if isinstance(value, (int, float)) else None for value in series_values]
-                    stats = _stats(cleaned)
+                    kind = "text"
+                    # The NaN array is not needed for a text series; release it
+                    # before the next column is finalised.
+                    values[column_index] = array("d")
+                    bucket = text_cells[column_index]
+                    cleaned = (
+                        [bucket.get(index) for index in range(sample_count)]
+                        if bucket
+                        else [None] * sample_count
+                    )
+                    stats = _stats([])
                 unit = definition.get("unit") or infer_unit(header["counter"])
                 label = header["counter"]
                 if header["instance"]:

@@ -345,10 +345,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not self._upload_auth_ok():
             return
         if not ANALYSIS_SLOTS.acquire(blocking=False):
+            maximum = config.max_concurrent_analyses()
             self.close_connection = True
             self._send_json(
-                {"ok": False, "error": "Another capture is already being analysed. Try again shortly."},
+                {
+                    "ok": False,
+                    "code": "analysis_busy",
+                    "error": (
+                        "The analysis queue is full "
+                        f"({maximum} of {maximum} slot{'s' if maximum != 1 else ''} in use). "
+                        "The previous capture is still being processed. Retry shortly; "
+                        "raise ESXTOP_MAX_CONCURRENT_ANALYSES only if the host has enough memory."
+                    ),
+                },
                 status=429,
+                extra_headers=[("Retry-After", "5")],
             )
             return
         try:
@@ -510,6 +521,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  Serving : {WEB_ROOT}")
     print(f"  Open    : {url}")
     print(f"  Upload  : up to {config.max_upload_bytes() // (1024 * 1024)} MB")
+    print(
+        f"  Limits  : {config.max_series():,} columns · {config.max_rows():,} samples · "
+        f"{config.max_cells():,} cells"
+    )
+    print(
+        f"  Workers : {config.max_concurrent_analyses()} analyse · "
+        f"{config.max_concurrent_requests()} HTTP"
+    )
     print(f"  Password: {'required' if config.upload_auth_required() else 'not set'}")
     print("  Stop    : Ctrl+C")
     print()

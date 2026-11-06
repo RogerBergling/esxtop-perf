@@ -17,6 +17,7 @@ import sqlite3
 import tempfile
 import threading
 import time
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -71,32 +72,49 @@ class SessionStore:
                 connection.execute("PRAGMA journal_mode=OFF")
                 connection.execute("PRAGMA synchronous=OFF")
                 connection.execute(
-                    "CREATE TABLE series_values (id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload BLOB NOT NULL)"
+                    "CREATE TABLE series_values ("
+                    "id TEXT PRIMARY KEY, kind TEXT NOT NULL, "
+                    "encoding TEXT NOT NULL, payload BLOB NOT NULL)"
                 )
-                rows: list[tuple[str, str, bytes]] = []
+                # Insert one series at a time. Building a list of every packed
+                # payload first doubles peak memory and is unnecessary: SQLite
+                # copies each blob into the database immediately.
                 for series in document.get("series", []):
                     kind = series.get("kind", "numeric")
                     values = series.get("values") or []
                     if kind == "numeric":
-                        packed = array.array(
-                            "d",
-                            (float(value) if isinstance(value, (int, float)) else math.nan for value in values),
-                        )
-                        payload = packed.tobytes()
+                        if isinstance(values, array.array) and values.typecode == "d":
+                            payload = values.tobytes()
+                        else:
+                            payload = array.array(
+                                "d",
+                                (float(value) if isinstance(value, (int, float)) else math.nan for value in values),
+                            ).tobytes()
                     else:
                         payload = json.dumps(
                             [value if isinstance(value, str) else None for value in values],
                             ensure_ascii=False,
                             separators=(",", ":"),
                         ).encode("utf-8")
-                    rows.append((str(series["id"]), kind, payload))
+                    encoding = "raw"
+                    # esxtop series are highly repetitive (many zeros and
+                    # plateaued counters). Compression keeps the /tmp session
+                    # small enough for multi-hundred-MB captures.
+                    if len(payload) >= 1024:
+                        compressed = zlib.compress(payload, 1)
+                        if len(compressed) < len(payload):
+                            payload = compressed
+                            encoding = "zlib"
+                    connection.execute(
+                        "INSERT INTO series_values(id, kind, encoding, payload) VALUES (?, ?, ?, ?)",
+                        (str(series["id"]), kind, encoding, payload),
+                    )
                     series_count += 1
                     cells += len(values)
                     # The browser receives statistics immediately; sample arrays
                     # are fetched on demand and never duplicated in the JSON.
                     series.pop("values", None)
                     series["lazy"] = True
-                connection.executemany("INSERT INTO series_values(id, kind, payload) VALUES (?, ?, ?)", rows)
                 connection.commit()
             finally:
                 connection.close()
@@ -160,10 +178,12 @@ class SessionStore:
         connection = sqlite3.connect(str(path), timeout=15)
         try:
             cursor = connection.execute(
-                f"SELECT id, kind, payload FROM series_values WHERE id IN ({placeholders})",
+                f"SELECT id, kind, encoding, payload FROM series_values WHERE id IN ({placeholders})",
                 clean_ids,
             )
-            for series_id, kind, payload in cursor.fetchall():
+            for series_id, kind, encoding, payload in cursor.fetchall():
+                if encoding == "zlib":
+                    payload = zlib.decompress(payload)
                 if kind == "numeric":
                     packed = array.array("d")
                     packed.frombytes(payload)

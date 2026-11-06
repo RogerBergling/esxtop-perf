@@ -20,6 +20,8 @@ import { applyBuildInfo, loadBuildInfo } from './version.js';
 
 const THEME_KEY = 'esxtop-lens-theme';
 const UPLOAD_PASSWORD_KEY = 'esxtop-lens-upload-password';
+const ANALYSIS_BUSY_RETRY_SECONDS = 5;
+const ANALYSIS_BUSY_MAX_ATTEMPTS = 24;
 const state = {
   doc: null,
   error: null,
@@ -234,7 +236,7 @@ async function checkUploadPassword(password) {
   return true;
 }
 
-async function uploadFile(file) {
+async function uploadFile(file, attempt = 0) {
   if (!file) return;
   const password = uploadPassword();
   if (state.health?.uploadAuthRequired && !password) {
@@ -250,7 +252,7 @@ async function uploadFile(file) {
     render();
     return;
   }
-  if (state.health?.uploadAuthRequired && password) {
+  if (attempt === 0 && state.health?.uploadAuthRequired && password) {
     showLoading('Checking upload password…', 'Verifying the password before sending the capture.', 2, 'Local analysis server');
     try {
       const accepted = await checkUploadPassword(password);
@@ -289,9 +291,9 @@ async function uploadFile(file) {
     parseProgress();
   });
   xhr.addEventListener('load', () => {
-    hideLoading();
     const document = xhr.response;
     if (xhr.status >= 200 && xhr.status < 300 && document?.ok) {
+      hideLoading();
       installDocument(document);
       if (!window.location.hash || ['#/', '#/import', '#/guide'].includes(window.location.hash)) {
         window.location.hash = '#/';
@@ -300,6 +302,23 @@ async function uploadFile(file) {
       render();
       return;
     }
+    if (xhr.status === 429 && document?.code === 'analysis_busy' && attempt < ANALYSIS_BUSY_MAX_ATTEMPTS) {
+      const retryAfter = Math.max(
+        1,
+        Math.min(30, Number(xhr.getResponseHeader('Retry-After')) || ANALYSIS_BUSY_RETRY_SECONDS),
+      );
+      clearInterval(parseTimer);
+      parseTimer = null;
+      showLoading(
+        'Waiting for the analysis server…',
+        `${document.error || 'Another capture is still being analysed.'} Retrying automatically in ${retryAfter}s (attempt ${attempt + 2} of ${ANALYSIS_BUSY_MAX_ATTEMPTS + 1}).`,
+        52,
+        `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} MB · queued locally`,
+      );
+      window.setTimeout(() => uploadFile(file, attempt + 1), retryAfter * 1000);
+      return;
+    }
+    hideLoading();
     if (xhr.status === 401) {
       state.health = { ...(state.health || {}), uploadAuthRequired: true };
     }

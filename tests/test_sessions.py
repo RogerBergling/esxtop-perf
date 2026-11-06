@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 import unittest
+from array import array
 
 from esxtop_perf.sessions import SessionStore
 
@@ -27,6 +29,23 @@ class SessionStoreTests(unittest.TestCase):
             self.assertEqual(stats["active"], 1)
             self.assertEqual(stats["cells"], 6)
             self.assertGreater(stats["bytes"], 0)
+        finally:
+            store.close()
+
+    def test_compact_numeric_arrays_and_compressed_payloads_round_trip(self) -> None:
+        store = SessionStore()
+        values = array("d", (float(index % 7) if index != 10 else math.nan for index in range(2_000)))
+        document = {
+            "meta": {"sampleCount": len(values)},
+            "series": [{"id": "s1", "kind": "numeric", "values": values}],
+        }
+        try:
+            session_id = store.create(document)
+            self.assertNotIn("values", document["series"][0])
+            loaded = store.get_values(session_id, ["s1"])["s1"]
+            self.assertEqual(len(loaded), 2_000)
+            self.assertEqual(loaded[:8], [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 0.0])
+            self.assertIsNone(loaded[10])
         finally:
             store.close()
 

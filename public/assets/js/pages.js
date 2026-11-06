@@ -1973,7 +1973,7 @@ head -1 /vmfs/volumes/datastore1/esxtop-test.csv \
         <p class="dim">This example already has the storage panels partly enabled. If you want only storage, clear the fields in the other panels before pressing <code>W</code>. The exact field letters and line count are release-specific; use the interactive <code>f</code> panel as the source of truth.</p>
       </div>
 
-      <div class="callout accent mt-1"><strong>Large sample count?</strong> At 145,663 columns the default 20,000,000-cell guardrail allows 137 samples. Giving the container more RAM does not raise the cell limit. Open the <a href="#/guide">field guide</a> and choose <b>Sizing large captures</b> for the memory formula, sample-count table, recommended <code>ESXTOP_MAX_*</code> values and a 10 GB Compose example.</div>
+      <div class="callout accent mt-1"><strong>Large sample count?</strong> At 145,663 columns the default 20,000,000-cell guardrail allows 137 samples. Giving the container more RAM does not raise the cell limit. Open the <a href="#/guide">field guide</a> and choose <b>Sizing large captures</b> for the memory formula, sample-count table, recommended <code>ESXTOP_MAX_*</code> values and a 4 GB Compose example.</div>
 
       <div class="section-head"><div><div class="eyebrow">Step by step</div><h2>The exact workflow</h2></div><p>The sequence matters: configure interactively, save with <code>W</code>, then reference that file with <code>-c</code> in batch mode.</p></div>
       <div class="steps-grid">${stepHtml}</div>
