@@ -13,7 +13,8 @@ services:
       # HTTPS/reverse-proxy authentication in front. See README.
       - "127.0.0.1:8007:8080"
     restart: unless-stopped
-    pull_policy: always
+    # Pin a reviewed digest in production. Update explicitly with `docker compose pull`.
+    pull_policy: if_not_present
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=2g
