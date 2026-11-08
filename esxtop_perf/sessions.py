@@ -41,6 +41,7 @@ class Session:
     sample_count: int
     cells: int
     series_count: int
+    protected: bool = False
 
 
 class SessionStore:
@@ -51,14 +52,33 @@ class SessionStore:
         self.root = Path(tempfile.mkdtemp(prefix="esxtop-lens-sessions-", dir=base))
         self._sessions: dict[str, Session] = {}
         self._lock = threading.RLock()
+        self._closed = False
+        self._stop_event = threading.Event()
+        self._sweeper = threading.Thread(
+            target=self._sweep_loop,
+            name="esxtop-session-sweeper",
+            daemon=True,
+        )
+        self._sweeper.start()
         atexit.register(self.close)
 
-    def create(self, document: dict[str, Any]) -> str:
+    def create(self, document: dict[str, Any], *, protected: bool = False) -> str:
         self._expire()
-        with self._lock:
-            while len(self._sessions) >= config.max_sessions():
-                oldest = min(self._sessions.values(), key=lambda item: item.last_access)
-                self._remove(oldest)
+        if not protected:
+            with self._lock:
+                # Protected demo sessions never consume a user session slot and
+                # are skipped by eviction, so a demo request cannot displace an
+                # active upload.
+                while True:
+                    evictable = [
+                        session
+                        for session in self._sessions.values()
+                        if not session.protected
+                    ]
+                    if len(evictable) < config.max_sessions():
+                        break
+                    oldest = min(evictable, key=lambda item: item.last_access)
+                    self._remove(oldest)
 
         session_id = secrets.token_urlsafe(18)
         path = self.root / f"{session_id}.sqlite3"
@@ -130,6 +150,7 @@ class SessionStore:
             sample_count=sample_count,
             cells=cells,
             series_count=series_count,
+            protected=protected,
         )
         with self._lock:
             self._sessions[session_id] = session
@@ -157,7 +178,8 @@ class SessionStore:
             session = self._sessions.get(session_id)
             if not session:
                 raise SessionError("The analysis session has expired. Re-import the capture.", 410)
-            if time.time() - session.last_access > config.session_ttl_seconds():
+            now = time.time()
+            if self._is_expired_locked(session, now):
                 self._remove(session)
                 raise SessionError("The analysis session has expired. Re-import the capture.", 410)
             if len(clean_ids) * max(1, session.sample_count) > config.max_request_cells():
@@ -165,7 +187,7 @@ class SessionStore:
                     "The requested series set is larger than the per-request value limit.",
                     413,
                 )
-            session.last_access = time.time()
+            session.last_access = now
             path = session.path
 
         if not path.exists():
@@ -194,6 +216,23 @@ class SessionStore:
             connection.close()
         return result
 
+    def has(self, session_id: str, *, touch: bool = False) -> bool:
+        """Return whether a live session exists without raising on expiry."""
+
+        if not session_id or not isinstance(session_id, str):
+            return False
+        now = time.time()
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return False
+            if self._is_expired_locked(session, now):
+                self._remove(session)
+                return False
+            if touch:
+                session.last_access = now
+            return True
+
     def stats(self) -> dict[str, Any]:
         with self._lock:
             self._expire_locked(time.time())
@@ -210,22 +249,49 @@ class SessionStore:
                 "cells": sum(session.cells for session in sessions),
                 "bytes": total_bytes,
                 "ttlSeconds": config.session_ttl_seconds(),
+                "maxLifetimeSeconds": config.session_max_lifetime_seconds(),
             }
 
     def close(self) -> None:
+        self._stop_event.set()
+        sweeper = getattr(self, "_sweeper", None)
+        if sweeper is not None and sweeper.is_alive() and sweeper is not threading.current_thread():
+            sweeper.join(timeout=2)
         with self._lock:
+            if self._closed and not self._sessions:
+                return
+            self._closed = True
             for session in list(self._sessions.values()):
                 self._remove(session)
         shutil.rmtree(self.root, ignore_errors=True)
+
+    def _sweep_loop(self) -> None:
+        while not self._stop_event.is_set():
+            ttl = max(0.1, float(config.session_ttl_seconds()))
+            interval = max(0.1, min(float(config.session_sweep_seconds()), ttl / 2))
+            if self._stop_event.wait(interval):
+                return
+            try:
+                self._expire()
+            except Exception:
+                # The sweeper must never terminate because one cleanup raised.
+                continue
 
     def _expire(self) -> None:
         with self._lock:
             self._expire_locked(time.time())
 
-    def _expire_locked(self, now: float) -> None:
+    def _is_expired_locked(self, session: Session, now: float) -> bool:
         ttl = config.session_ttl_seconds()
+        max_lifetime = config.session_max_lifetime_seconds()
+        return (
+            now - session.last_access > ttl
+            or now - session.created > max_lifetime
+        )
+
+    def _expire_locked(self, now: float) -> None:
         for session in list(self._sessions.values()):
-            if now - session.last_access > ttl:
+            if self._is_expired_locked(session, now):
                 self._remove(session)
 
     def _remove_expired_locked(self, now: float) -> None:

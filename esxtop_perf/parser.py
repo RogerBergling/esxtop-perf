@@ -137,17 +137,93 @@ def _open_text_stream(upload: BinaryIO) -> tuple[io.TextIOWrapper, bool]:
     return text, compressed
 
 
-def _csv_rows(reader: Any):
-    """Yield CSV rows while converting stream/format faults into a 422 error."""
+def _csv_lines(text: io.TextIOBase, max_line_chars: int):
+    """Yield physical lines without ever materialising an unbounded line."""
 
+    while True:
+        try:
+            line = text.readline(max_line_chars + 2)
+        except (OSError, EOFError, UnicodeError) as exc:
+            raise CaptureError(
+                "The capture could not be decoded as PDH-CSV. It may be corrupt, "
+                "truncated, or compressed with an unsupported stream.",
+                status=422,
+            ) from exc
+        if not line:
+            return
+        content = line.rstrip("\r\n")
+        if len(content) > max_line_chars:
+            raise CaptureError(
+                "A capture line is larger than the physical line safety limit. "
+                "Reduce the number of fields or raise ESXTOP_MAX_LINE_MB.",
+                status=413,
+            )
+        yield content
+
+
+def _count_unquoted_fields(line: str, limit: int) -> int:
+    """Count CSV fields outside quotes, stopping once ``limit`` is exceeded."""
+
+    count = 1
+    quoted = False
+    index = 0
+    length = len(line)
+    while index < length:
+        char = line[index]
+        if char == '"':
+            if quoted and index + 1 < length and line[index + 1] == '"':
+                index += 2
+                continue
+            quoted = not quoted
+        elif char == "," and not quoted:
+            count += 1
+            if count > limit:
+                return count
+        index += 1
+    return count
+
+
+def _parse_csv_line(line: str, max_fields: int) -> list[str]:
+    """Parse one physical line while enforcing a hard field-count ceiling.
+
+    The pre-check runs before ``csv.reader`` materialises a list of fields, so a
+    line containing a million commas cannot allocate a million Python strings.
+    """
+
+    if line.count('"') % 2:
+        raise CaptureError(
+            "The capture contains an unterminated quoted field. Multi-line CSV "
+            "fields are not supported.",
+            status=422,
+        )
+    if '"' not in line:
+        if line.count(",") + 1 > max_fields:
+            raise CaptureError(
+                f"A capture line contains more than {max_fields:,} fields. "
+                "Rows may not contain more fields than the header.",
+                status=413,
+            )
+    elif line.count(",") + 1 > max_fields and _count_unquoted_fields(line, max_fields) > max_fields:
+        raise CaptureError(
+            f"A capture line contains more than {max_fields:,} fields. "
+            "Rows may not contain more fields than the header.",
+            status=413,
+        )
     try:
-        yield from reader
-    except (csv.Error, OSError, EOFError, UnicodeError) as exc:
+        row = next(csv.reader([line]), [])
+    except (csv.Error, ValueError) as exc:
         raise CaptureError(
             "The capture could not be decoded as PDH-CSV. It may be corrupt, "
             "truncated, or compressed with an unsupported stream.",
             status=422,
         ) from exc
+    if len(row) > max_fields:
+        raise CaptureError(
+            f"A capture line contains more than {max_fields:,} fields. "
+            "Rows may not contain more fields than the header.",
+            status=413,
+        )
+    return row
 
 
 def _parse_timestamp(value: str) -> datetime | None:
@@ -449,12 +525,14 @@ def parse_capture(path: str | Path, filename: str) -> dict[str, Any]:
     with source.open("rb") as upload:
         text, compressed = _open_text_stream(upload)
         try:
-            reader = csv.reader(text)
-            rows = _csv_rows(reader)
+            max_series = config.max_series()
+            max_header_fields = max_series + 1
+            lines = _csv_lines(text, config.max_line_bytes())
             try:
-                raw_header = next(rows)
+                header_line = next(lines)
             except StopIteration as exc:
                 raise CaptureError("The file is empty.", status=422) from exc
+            raw_header = _parse_csv_line(header_line, max_header_fields)
             if not raw_header or "PDH-CSV" not in raw_header[0].upper():
                 raise CaptureError(
                     "This does not look like an esxtop batch capture. "
@@ -465,6 +543,13 @@ def parse_capture(path: str | Path, filename: str) -> dict[str, Any]:
             active_columns: list[tuple[int, dict[str, str], dict[str, Any], dict[str, str]]] = []
             host_counts: dict[str, int] = {}
             for index, raw in enumerate(raw_header[1:], start=1):
+                if index > max_series:
+                    raise CaptureError(
+                        f"Capture contains more than {max_series:,} metric columns; "
+                        f"the current safety limit is {max_series:,}. "
+                        "Raise ESXTOP_MAX_SERIES or capture fewer fields.",
+                        status=413,
+                    )
                 if not raw.strip():
                     continue
                 header = _parse_header_path(raw)
@@ -491,7 +576,6 @@ def parse_capture(path: str | Path, filename: str) -> dict[str, Any]:
 
             if not active_columns:
                 raise CaptureError("The capture has no metric columns.", status=422)
-            max_series = config.max_series()
             max_rows = config.max_rows()
             max_cells = config.max_cells()
             if len(active_columns) > max_series:
@@ -521,12 +605,13 @@ def parse_capture(path: str | Path, filename: str) -> dict[str, Any]:
             expected_length = len(raw_header)
             parse_number = _parse_number
 
-            for row in rows:
+            for line in lines:
+                row = _parse_csv_line(line, expected_length)
                 if not row or not any(cell.strip() for cell in row):
                     blank_rows += 1
                     continue
                 row_length = len(row)
-                if row_length != expected_length:
+                if row_length < expected_length:
                     mismatched_rows += 1
                 if len(raw_times) >= max_rows:
                     raise CaptureError(
@@ -659,7 +744,7 @@ def parse_capture(path: str | Path, filename: str) -> dict[str, Any]:
             hosts = sorted(host_counts, key=lambda name: (-host_counts[name], name.lower()))
             if mismatched_rows:
                 warnings.append(
-                    f"{mismatched_rows} row(s) had a different number of fields than the header; "
+                    f"{mismatched_rows} row(s) had fewer fields than the header; "
                     "missing cells were treated as empty."
                 )
             if len(hosts) > 1:

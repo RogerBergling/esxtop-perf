@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import math
+import os
+import time
 import unittest
 from array import array
+from unittest.mock import patch
 
+from esxtop_perf import config
 from esxtop_perf.sessions import SessionStore
 
 
@@ -58,6 +62,60 @@ class SessionStoreTests(unittest.TestCase):
                 store.get_values("not-a-session", ["s1"])
         finally:
             store.close()
+
+    def _document(self, value: float = 1.0) -> dict:
+        return {
+            "meta": {"sampleCount": 1},
+            "series": [{"id": "s1", "kind": "numeric", "values": [value]}],
+        }
+
+    def test_protected_demo_session_never_evicts_a_user_session(self) -> None:
+        with patch.dict(os.environ, {"ESXTOP_MAX_SESSIONS": "1"}):
+            store = SessionStore()
+            try:
+                user_session = store.create(self._document())
+                demo_session = store.create(self._document(2.0), protected=True)
+                self.assertTrue(store.has(user_session))
+                self.assertTrue(store.has(demo_session))
+                replacement = store.create(self._document(3.0))
+                self.assertTrue(store.has(replacement))
+                self.assertTrue(store.has(demo_session))
+                self.assertFalse(store.has(user_session))
+            finally:
+                store.close()
+
+    def test_background_sweeper_removes_expired_sessions(self) -> None:
+        with patch.object(config, "session_ttl_seconds", return_value=0.2), patch.object(
+            config, "session_sweep_seconds", return_value=0.05
+        ), patch.object(config, "session_max_lifetime_seconds", return_value=30):
+            store = SessionStore()
+            try:
+                session_id = store.create(self._document())
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    with store._lock:
+                        if session_id not in store._sessions:
+                            break
+                    time.sleep(0.05)
+                with store._lock:
+                    self.assertNotIn(session_id, store._sessions)
+                self.assertFalse(store.has(session_id))
+            finally:
+                store.close()
+
+    def test_absolute_lifetime_expires_an_active_session(self) -> None:
+        with patch.object(config, "session_ttl_seconds", return_value=30), patch.object(
+            config, "session_sweep_seconds", return_value=0.05
+        ), patch.object(config, "session_max_lifetime_seconds", return_value=0.4):
+            store = SessionStore()
+            try:
+                session_id = store.create(self._document())
+                time.sleep(0.2)
+                self.assertTrue(store.has(session_id, touch=True))
+                time.sleep(0.3)
+                self.assertFalse(store.has(session_id))
+            finally:
+                store.close()
 
 
 if __name__ == "__main__":

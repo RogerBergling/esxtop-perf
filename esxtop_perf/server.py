@@ -72,10 +72,111 @@ BUSY_RESPONSE = (
 SESSIONS = SessionStore()
 UPLOAD_PASSWORD_HEADER = "X-ESXTOP-Upload-Password"
 ANALYSIS_SLOTS = threading.BoundedSemaphore(config.max_concurrent_analyses())
+DEMO_SLOTS = threading.BoundedSemaphore(config.max_concurrent_demos())
+DEMO_LOCK = threading.Lock()
+DEMO_CACHE: dict[str, object] = {}
 AUTH_FAILURE_LIMIT = 5
 AUTH_FAILURE_WINDOW_SECONDS = 60
+AUTH_FAILURE_MAX_ENTRIES = 4096
 AUTH_FAILURES: dict[str, list[float]] = {}
 AUTH_FAILURES_LOCK = threading.Lock()
+
+
+def _normalize_host(value: str) -> str:
+    host = value.strip().lower().rstrip(".")
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    return host
+
+
+def _authority(value: str | None) -> tuple[str, int | None] | None:
+    """Parse a Host/authority value into (hostname, explicit port)."""
+
+    if not value:
+        return None
+    value = value.strip()
+    if not value or any(char in value for char in " \t,;/@"):
+        return None
+    try:
+        parsed = urllib.parse.urlsplit("//" + value)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        not hostname
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+        or parsed.username
+        or parsed.password
+    ):
+        return None
+    return _normalize_host(hostname), port
+
+
+def origin_allowed(origin: str | None, host_header: str | None) -> bool:
+    """Validate Host and Origin against the explicit host allowlist."""
+
+    authority = _authority(host_header)
+    if authority is None:
+        return False
+    host_name, host_port = authority
+    if host_name not in config.allowed_hosts():
+        return False
+    if not origin:
+        return True
+    if origin.strip().lower() == "null":
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(origin.strip())
+        origin_host = parsed.hostname
+        origin_port = parsed.port
+    except ValueError:
+        return False
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not origin_host
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        return False
+    origin_name = _normalize_host(origin_host)
+    if origin_name not in config.allowed_hosts() or origin_name != host_name:
+        return False
+    default_port = 443 if parsed.scheme == "https" else 80
+    return (origin_port or default_port) == (host_port or default_port)
+
+
+def _prune_auth_failures_locked(now: float) -> None:
+    """Drop stale IPs and bound the failure map's memory footprint."""
+
+    for ip, stamps in list(AUTH_FAILURES.items()):
+        fresh = [
+            stamp
+            for stamp in stamps
+            if now - stamp < AUTH_FAILURE_WINDOW_SECONDS
+        ]
+        if fresh:
+            AUTH_FAILURES[ip] = fresh
+        else:
+            AUTH_FAILURES.pop(ip, None)
+    excess = len(AUTH_FAILURES) - AUTH_FAILURE_MAX_ENTRIES
+    if excess > 0:
+        oldest = sorted(
+            AUTH_FAILURES.items(),
+            key=lambda item: item[1][-1] if item[1] else 0.0,
+        )
+        for ip, _ in oldest[:excess]:
+            AUTH_FAILURES.pop(ip, None)
+
+
+def _reset_demo_cache() -> None:
+    with DEMO_LOCK:
+        DEMO_CACHE.clear()
 
 
 def _json_bytes(document: dict) -> bytes:
@@ -112,12 +213,30 @@ class BoundedThreadingHTTPServer(http.server.ThreadingHTTPServer):
             self._request_slots.release()
 
 
-def _analyze_file(path: str, filename: str) -> dict:
+def _analyze_file(path: str, filename: str, *, protected: bool = False) -> dict:
     parsed = build_analysis(parse_capture(path, filename))
     document = {**parsed, "ok": True, "appVersion": APP_VERSION, "parserVersion": PARSER_VERSION}
-    session_id = SESSIONS.create(document)
+    session_id = SESSIONS.create(document, protected=protected)
     document["meta"]["sessionId"] = session_id
     return document
+
+
+def _demo_payload() -> bytes:
+    """Return a cached demo response and one protected, reusable session."""
+
+    with DEMO_LOCK:
+        session_id = DEMO_CACHE.get("session")
+        payload = DEMO_CACHE.get("payload")
+        if isinstance(session_id, str) and isinstance(payload, bytes) and SESSIONS.has(session_id, touch=True):
+            return payload
+        if not DEMO_FILE.exists():
+            raise CaptureError("The bundled demo capture is missing.", status=404)
+        document = _analyze_file(str(DEMO_FILE), DEMO_FILE.name, protected=True)
+        document["meta"]["demo"] = True
+        payload = _json_bytes(document)
+        DEMO_CACHE["session"] = document["meta"]["sessionId"]
+        DEMO_CACHE["payload"] = payload
+        return payload
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -181,18 +300,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json({"ok": True})
             return
         if path == "/api/demo":
-            try:
-                if not DEMO_FILE.exists():
-                    raise CaptureError("The bundled demo capture is missing.", status=404)
-                document = _analyze_file(str(DEMO_FILE), DEMO_FILE.name)
-                document["meta"]["demo"] = True
-                payload = _json_bytes(document)
-                self._send_bytes(payload, "application/json; charset=utf-8", compress=True)
-            except CaptureError as exc:
-                self._send_json({"ok": False, "error": exc.message}, status=exc.status)
-            except Exception:
-                traceback.print_exc()
-                self._send_json({"ok": False, "error": "Could not load the demo capture."}, status=500)
+            self._handle_demo()
             return
         if path.startswith("/api/"):
             self._send_json({"ok": False, "error": "Not found."}, status=404)
@@ -222,20 +330,35 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         self._handle_analyze()
 
+    def _handle_demo(self) -> None:
+        if not DEMO_SLOTS.acquire(blocking=False):
+            self.close_connection = True
+            self._send_json(
+                {
+                    "ok": False,
+                    "code": "demo_busy",
+                    "error": "The demo is already being prepared. Retry shortly.",
+                },
+                status=429,
+                extra_headers=[("Retry-After", "5")],
+            )
+            return
+        try:
+            payload = _demo_payload()
+            self._send_bytes(payload, "application/json; charset=utf-8", compress=True)
+        except CaptureError as exc:
+            self._send_json({"ok": False, "error": exc.message}, status=exc.status)
+        except Exception:
+            traceback.print_exc()
+            self._send_json({"ok": False, "error": "Could not load the demo capture."}, status=500)
+        finally:
+            DEMO_SLOTS.release()
+
     def _origin_ok(self) -> bool:
-        origin = self.headers.get("Origin")
-        if origin:
-            parsed = urllib.parse.urlparse(origin)
-            origin_host = parsed.netloc
-            if (
-                origin.strip().lower() == "null"
-                or parsed.scheme not in {"http", "https"}
-                or not origin_host
-                or origin_host != self.headers.get("Host")
-            ):
-                self.close_connection = True
-                self._send_json({"ok": False, "error": "Cross-origin requests are not allowed."}, status=403)
-                return False
+        if not origin_allowed(self.headers.get("Origin"), self.headers.get("Host")):
+            self.close_connection = True
+            self._send_json({"ok": False, "error": "Cross-origin requests are not allowed."}, status=403)
+            return False
         return True
 
     def _content_length(self, maximum: int | None = None) -> int | None:
@@ -295,28 +418,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         ip = self._client_ip()
         now = time.monotonic()
         with AUTH_FAILURES_LOCK:
-            failures = [
-                stamp
-                for stamp in AUTH_FAILURES.get(ip, [])
-                if now - stamp < AUTH_FAILURE_WINDOW_SECONDS
-            ]
-            AUTH_FAILURES[ip] = failures
+            _prune_auth_failures_locked(now)
+            failures = AUTH_FAILURES.get(ip, [])
             return len(failures) >= AUTH_FAILURE_LIMIT
 
     def _record_auth_failure(self) -> None:
         ip = self._client_ip()
         now = time.monotonic()
         with AUTH_FAILURES_LOCK:
-            failures = [
-                stamp
-                for stamp in AUTH_FAILURES.get(ip, [])
-                if now - stamp < AUTH_FAILURE_WINDOW_SECONDS
-            ]
+            _prune_auth_failures_locked(now)
+            failures = AUTH_FAILURES.get(ip, [])
             failures.append(now)
             AUTH_FAILURES[ip] = failures[-AUTH_FAILURE_LIMIT:]
+            _prune_auth_failures_locked(now)
 
     def _clear_auth_failures(self) -> None:
         with AUTH_FAILURES_LOCK:
+            _prune_auth_failures_locked(time.monotonic())
             AUTH_FAILURES.pop(self._client_ip(), None)
 
     def _upload_auth_ok(self) -> bool:

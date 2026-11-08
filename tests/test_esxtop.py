@@ -455,6 +455,76 @@ class ParserEdgeTests(unittest.TestCase):
         finally:
             Path(name).unlink(missing_ok=True)
 
+    def test_gzip_million_comma_row_is_rejected_before_materializing(self) -> None:
+        header = (
+            '"(PDH-CSV 4.0) (UTC)(0)",'
+            '"\\\\lab\\Physical Cpu(_Total)\\% Processor Time"'
+        )
+        row = '"11/02/2026 12:00:00",' + "," * 1_000_000
+        payload = gzip.compress(f"{header}\n{row}\n".encode("utf-8"), compresslevel=1)
+        with tempfile.NamedTemporaryFile(suffix=".csv.gz", delete=False) as handle:
+            handle.write(payload)
+            name = handle.name
+        try:
+            with self.assertRaises(CaptureError) as context:
+                parse_capture(name, "million-commas.csv.gz")
+            self.assertGreaterEqual(context.exception.status, 400)
+            self.assertLess(context.exception.status, 500)
+            self.assertEqual(context.exception.status, 413)
+        finally:
+            Path(name).unlink(missing_ok=True)
+
+    def test_very_wide_gzip_header_is_rejected_before_building_columns(self) -> None:
+        header = (
+            '"(PDH-CSV 4.0) (UTC)(0)"'
+            + ',"\\\\lab\\Physical Cpu(0)\\% Processor Time"' * (config.max_series() + 1)
+        )
+        payload = gzip.compress(f"{header}\n".encode("utf-8"), compresslevel=1)
+        with tempfile.NamedTemporaryFile(suffix=".csv.gz", delete=False) as handle:
+            handle.write(payload)
+            name = handle.name
+        try:
+            with patch("esxtop_perf.parser._parse_header_path") as parse_header:
+                with self.assertRaises(CaptureError) as context:
+                    parse_capture(name, "wide-header.csv.gz")
+                parse_header.assert_not_called()
+            self.assertEqual(context.exception.status, 413)
+        finally:
+            Path(name).unlink(missing_ok=True)
+
+    def test_overlong_physical_line_is_rejected(self) -> None:
+        header = (
+            '"(PDH-CSV 4.0) (UTC)(0)",'
+            '"\\\\lab\\Physical Cpu(_Total)\\% Processor Time"'
+        )
+        row = '"11/02/2026 12:00:00","' + "x" * (1024 * 1024 + 8) + '"'
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8") as handle:
+            handle.write(f"{header}\n{row}\n")
+            name = handle.name
+        try:
+            with patch.dict(os.environ, {"ESXTOP_MAX_LINE_MB": "1"}):
+                with self.assertRaises(CaptureError) as context:
+                    parse_capture(name, "long-line.csv")
+            self.assertEqual(context.exception.status, 413)
+        finally:
+            Path(name).unlink(missing_ok=True)
+
+    def test_row_with_more_fields_than_header_is_rejected(self) -> None:
+        header = (
+            '"(PDH-CSV 4.0) (UTC)(0)",'
+            '"\\\\lab\\Physical Cpu(_Total)\\% Processor Time"'
+        )
+        body = '"11/02/2026 12:00:00","10","extra"'
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8") as handle:
+            handle.write(f"{header}\n{body}\n")
+            name = handle.name
+        try:
+            with self.assertRaises(CaptureError) as context:
+                parse_capture(name, "extra-field.csv")
+            self.assertEqual(context.exception.status, 413)
+        finally:
+            Path(name).unlink(missing_ok=True)
+
     def test_healthy_capture_is_green(self) -> None:
         header = (
             '"(PDH-CSV 4.0) (UTC)(0)",'

@@ -76,12 +76,60 @@ def max_cells() -> int:
     return _int("ESXTOP_MAX_CELLS", 20_000_000)
 
 
+def max_line_bytes() -> int:
+    """Maximum physical CSV line length before field parsing.
+
+    A single hostile line can otherwise expand into millions of Python string
+    objects even when the total decompressed byte cap is respected.
+    """
+
+    return _int("ESXTOP_MAX_LINE_MB", 32) * 1024 * 1024
+
+
 def session_ttl_seconds() -> int:
     return _int("ESXTOP_SESSION_TTL_MINUTES", 30) * 60
 
 
+def session_max_lifetime_seconds() -> int:
+    """Absolute session lifetime, even when the session is accessed repeatedly."""
+
+    configured = _int("ESXTOP_SESSION_MAX_LIFETIME_MINUTES", 0, minimum=0)
+    if configured > 0:
+        return configured * 60
+    return session_ttl_seconds() * 2
+
+
+def session_sweep_seconds() -> int:
+    return _int("ESXTOP_SESSION_SWEEP_SECONDS", 30)
+
+
 def max_sessions() -> int:
     return _int("ESXTOP_MAX_SESSIONS", 4)
+
+
+def max_concurrent_demos() -> int:
+    return _int("ESXTOP_MAX_CONCURRENT_DEMOS", 1)
+
+
+def allowed_hosts() -> frozenset[str]:
+    """Host header allowlist, including an optional configured public host."""
+
+    hosts = {"localhost", "127.0.0.1", "::1"}
+    raw = ",".join(
+        value
+        for value in (
+            os.environ.get("ESXTOP_ALLOWED_HOSTS", ""),
+            os.environ.get("ESXTOP_PUBLIC_HOST", ""),
+        )
+        if value
+    )
+    for entry in raw.split(","):
+        host = entry.strip().lower().rstrip(".")
+        if host.startswith("[") and host.endswith("]"):
+            host = host[1:-1]
+        if host:
+            hosts.add(host)
+    return frozenset(hosts)
 
 
 def max_request_series() -> int:
@@ -134,14 +182,18 @@ def public_limits() -> dict[str, int | str]:
     return {
         "uploadBytes": max_upload_bytes(),
         "decompressedBytes": max_decompressed_bytes(),
+        "maxLineBytes": max_line_bytes(),
         "maxSeries": max_series(),
         "maxRows": max_rows(),
         "maxCells": max_cells(),
         "sessionTtlSeconds": session_ttl_seconds(),
+        "sessionMaxLifetimeSeconds": session_max_lifetime_seconds(),
+        "sessionSweepSeconds": session_sweep_seconds(),
         "maxSessions": max_sessions(),
         "maxRequestSeries": max_request_series(),
         "maxRequestCells": max_request_cells(),
         "maxConcurrentAnalyses": max_concurrent_analyses(),
+        "maxConcurrentDemos": max_concurrent_demos(),
         "maxConcurrentRequests": max_concurrent_requests(),
         "requestTimeoutSeconds": request_timeout_seconds(),
     }

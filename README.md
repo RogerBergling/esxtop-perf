@@ -80,7 +80,7 @@ Both screenshots use the bundled synthetic demo capture. The demo contains inten
 - **HTML and PDF reports** — a standalone HTML report and browser print-to-PDF with the executive summary, a prioritized “What to do next” action plan, every finding, and a technical reference covering KAVG, DAVG, GAVG, %RDY, %MLMTD, %CSTP and the other counters behind the findings. Choose multiple hosts and VMs, filter seven metric categories, and export HTML, PDF or a category-filtered metrics CSV.
 - **Written field guide** — the capture command explained token by token, CSV anatomy, counter semantics, playbooks and caveats.
 - **Focused capture manual** — a step-by-step `-c` workflow with a command builder, verification recipe and the traps that make a configuration silently ineffective.
-- **Local-only processing** — captures are parsed into a short-lived local session. No analytics, no third-party upload; the session is removed after 30 minutes or on restart. An optional upload password can be set before exposing the app beyond localhost.
+- **Local-only processing** — captures are parsed into a short-lived local session. No analytics, no third-party upload; the session is removed after 30 minutes of inactivity, after 60 minutes absolute lifetime, or on restart. An optional upload password can be set before exposing the app beyond localhost.
 - **Docker + GHCR** — multi-arch image publishing; updates are deliberate (`docker compose pull`), with no Docker socket mounted and no automatic-update sidecar.
 
 ## Detailed setup
@@ -451,19 +451,28 @@ The current all-metric defaults admit captures up to 200,000 metric columns:
 | --- | --- | --- |
 | Upload | 512 MB | `ESXTOP_MAX_UPLOAD_MB` |
 | Decompressed stream | 1.5 GB | `ESXTOP_MAX_DECOMPRESSED_MB` |
+| Physical CSV line | 32 MB | `ESXTOP_MAX_LINE_MB` |
 | Total data cells | 20,000,000 | `ESXTOP_MAX_CELLS` |
 | Metric columns | 200,000 | `ESXTOP_MAX_SERIES` |
 | Samples | 50,000 | `ESXTOP_MAX_ROWS` |
 | Session TTL | 30 minutes | `ESXTOP_SESSION_TTL_MINUTES` |
+| Session absolute lifetime | 60 minutes (2x TTL) | `ESXTOP_SESSION_MAX_LIFETIME_MINUTES` |
+| Session sweeper interval | 30 seconds | `ESXTOP_SESSION_SWEEP_SECONDS` |
 | Concurrent sessions | 4 | `ESXTOP_MAX_SESSIONS` |
 | Concurrent upload analyses | 1 | `ESXTOP_MAX_CONCURRENT_ANALYSES` |
+| Concurrent demo preparations | 1 | `ESXTOP_MAX_CONCURRENT_DEMOS` |
 | Concurrent HTTP requests | 32 | `ESXTOP_MAX_CONCURRENT_REQUESTS` |
 | Request read timeout | 120 seconds | `ESXTOP_REQUEST_TIMEOUT_SECONDS` |
 | Series per value request | 200 | `ESXTOP_MAX_REQUEST_SERIES` |
 | Cells per value request | 5,000,000 | `ESXTOP_MAX_REQUEST_CELLS` |
 | Upload password | unset (no gate) | `ESXTOP_UPLOAD_PASSWORD` |
+| Allowed Host/Origin names | `localhost`, `127.0.0.1`, `[::1]` | `ESXTOP_ALLOWED_HOSTS`, `ESXTOP_PUBLIC_HOST` |
 
-When `ESXTOP_UPLOAD_PASSWORD` is set, `POST /api/analyze` requires the matching `X-ESXTOP-Upload-Password` header. The browser import page prompts for it and keeps it in `sessionStorage` for the tab. The password is compared server-side with a constant-time comparison and is never embedded in the frontend bundle. Five failed attempts from one client IP within 60 seconds return **429** with `Retry-After: 60` until the window expires, so the password cannot be brute-forced at full request speed. Behind a reverse proxy all requests appear to come from the proxy address, so the throttle is shared; add proxy-level rate limiting as well.
+Rows with more fields than the header and physical lines above `ESXTOP_MAX_LINE_MB` are rejected with **413** before the CSV parser can materialise an unbounded field list. Header fields are counted and capped against `ESXTOP_MAX_SERIES` before any column objects are built. Truncated rows with fewer fields are still padded and reported as a warning.
+
+When `ESXTOP_UPLOAD_PASSWORD` is set, `POST /api/analyze` requires the matching `X-ESXTOP-Upload-Password` header. The browser import page prompts for it and keeps it in `sessionStorage` for the tab. The password is compared server-side with a constant-time comparison and is never embedded in the frontend bundle. Five failed attempts from one client IP within 60 seconds return **429** with `Retry-After: 60` until the window expires, so the password cannot be brute-forced at full request speed. Stale failure buckets are pruned and the per-IP map is bounded, so spoofed addresses cannot grow it without limit; behind a reverse proxy all requests appear to come from the proxy address, so the throttle is shared. Add proxy-level rate limiting as well.
+
+Requests with an `Origin` header must match the request `Host` exactly on scheme host and port, and the `Host` name must be on the allowlist. The defaults are `localhost`, `127.0.0.1` and `[::1]`; set `ESXTOP_ALLOWED_HOSTS` (comma-separated) or `ESXTOP_PUBLIC_HOST` when the app is reached through another hostname or reverse proxy. DNS-rebinding-style Host values and `Origin: null` are rejected. This is an application-level check, not a substitute for TLS and proxy authentication.
 
 Only `ESXTOP_MAX_CONCURRENT_ANALYSES` uploads are parsed at once (default **1**). A second upload receives **429** rather than competing for memory with a large analysis. Raise this only when the container has enough RAM and `/tmp` for multiple simultaneous captures.
 
@@ -471,7 +480,7 @@ The HTTP server is also bounded by `ESXTOP_MAX_CONCURRENT_REQUESTS` and a read t
 
 CSV exports deliberately neutralize spreadsheet formula injection: text cells beginning with `=`, `+`, `@`, tab, carriage return, or a non-numeric `-` are prefixed with an apostrophe. Legitimate negative numbers remain numeric. The browser-side regression test is `node scripts/test_csv_safety.mjs`.
 
-These are safety settings, not esxtop limits. Increase them for a larger single-user box; lower them for an exposed/multi-user deployment. The browser does **not** receive all sample arrays up front. Only metadata, statistics and findings are sent initially; charts fetch their visible series from `/api/series`, and the session database is deleted after the TTL or server shutdown.
+These are safety settings, not esxtop limits. Increase them for a larger single-user box; lower them for an exposed/multi-user deployment. The browser does **not** receive all sample arrays up front. Only metadata, statistics and findings are sent initially; charts fetch their visible series from `/api/series`, and the session database is deleted after the TTL, when its absolute lifetime is reached, by the background sweeper, or on server shutdown. The bundled demo is parsed once, cached in memory, and uses a protected session plus its own concurrency limit; repeated demo requests never evict an upload session.
 
 The 8M-cell/50k-column caps from the earlier version are gone. The 200,000-column ceiling covers the observed 145,663-column capture. The 20,000,000-cell limit allows 100 samples at the full 200,000-column width, or 137 samples of the observed 145,663-column capture; raise `ESXTOP_MAX_CELLS` for longer captures when the container has enough memory and `/tmp` space.
 
