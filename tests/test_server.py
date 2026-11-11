@@ -27,6 +27,32 @@ class OriginPolicyTests(unittest.TestCase):
     def test_dns_rebinding_style_host_is_rejected(self) -> None:
         self.assertFalse(server_module.origin_allowed(None, "localhost.evil.example:8080"))
         self.assertFalse(server_module.origin_allowed(None, "127.0.0.1.nip.io:8080"))
+        self.assertFalse(server_module.origin_allowed(None, "esxtop.example.com:8080"))
+
+    def test_lan_ip_and_local_hostnames_are_allowed(self) -> None:
+        for host in (
+            "192.168.6.60:8080",
+            "10.0.0.5:8080",
+            "[fe80::1]:8080",
+            "esxtop-lens:8080",
+            "esxtop.local:8080",
+            "esxtop.lan:8080",
+            "esxtop.home.arpa:8080",
+            "esxtop.internal:8080",
+            "esxtop.localhost:8080",
+        ):
+            with self.subTest(host=host):
+                self.assertTrue(server_module.origin_allowed(None, host))
+                self.assertTrue(
+                    server_module.origin_allowed(f"http://{host}", host)
+                )
+
+    def test_lan_host_does_not_trust_an_external_origin(self) -> None:
+        self.assertFalse(
+            server_module.origin_allowed(
+                "https://evil.example", "192.168.6.60:8080"
+            )
+        )
 
     def test_cross_origin_scheme_host_and_port_are_rejected(self) -> None:
         cases = [
@@ -139,15 +165,37 @@ class DemoSessionIsolationTests(unittest.TestCase):
         server_module.ANALYSIS_SLOTS = self.old_analysis_slots
         server_module._reset_demo_cache()
 
-    def _post_json(self, path: str, payload: dict) -> dict:
+    def _post_json(
+        self, path: str, payload: dict, headers: dict | None = None
+    ) -> dict:
+        request_headers = {
+            "Content-Type": "application/json",
+            "Accept-Encoding": "identity",
+            **(headers or {}),
+        }
         request = urllib.request.Request(
             f"{self.base}{path}",
             data=json.dumps(payload).encode("utf-8"),
             method="POST",
-            headers={"Content-Type": "application/json", "Accept-Encoding": "identity"},
+            headers=request_headers,
         )
         with self.opener.open(request, timeout=30) as response:
             return json.loads(response.read().decode("utf-8"))
+
+    def test_demo_series_work_when_opened_through_a_lan_ip(self) -> None:
+        with self.opener.open(f"{self.base}/api/demo", timeout=30) as response:
+            demo = json.loads(response.read().decode("utf-8"))
+        numeric = next(
+            series for series in demo["series"] if series["kind"] == "numeric"
+        )
+        lan_host = f"192.168.6.60:{self.port}"
+        values = self._post_json(
+            "/api/series",
+            {"session": demo["meta"]["sessionId"], "ids": [numeric["id"]]},
+            headers={"Host": lan_host, "Origin": f"http://{lan_host}"},
+        )
+        self.assertTrue(values["ok"])
+        self.assertEqual(len(values["series"][numeric["id"]]), 60)
 
     def test_ten_demo_requests_do_not_evict_an_upload_session(self) -> None:
         with patch.dict(os.environ, {"ESXTOP_MAX_SESSIONS": "1"}):

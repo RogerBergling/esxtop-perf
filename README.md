@@ -94,7 +94,7 @@ curl -O https://raw.githubusercontent.com/RogerBergling/esxtop-perf/main/compose
 docker compose up -d
 ```
 
-Open **http://localhost:8007** and drop in a capture, or click **Load demo capture**. The Compose port is bound to **127.0.0.1** by default. To expose it on the LAN, set `ESXTOP_UPLOAD_PASSWORD` in `.env`, change the Compose port mapping to `8007:8080`, and use HTTPS/reverse-proxy authentication; see [Upload password and public exposure](#upload-password-and-public-exposure).
+Open **http://localhost:8007** and drop in a capture, or click **Load demo capture**. The Compose port is bound to **127.0.0.1** by default. To expose it on the LAN, set `ESXTOP_UPLOAD_PASSWORD` in `.env`, change the Compose port mapping to `8007:8080`, and use HTTPS/reverse-proxy authentication; see [Upload password and public exposure](#upload-password-and-public-exposure). Access through a LAN IP or a local hostname works without extra configuration. If you use a public DNS name, set `ESXTOP_ALLOWED_HOSTS` or `ESXTOP_PUBLIC_HOST`; both are forwarded by `compose.yaml`. A reverse proxy must preserve the browser-visible `Host` header.
 
 If GHCR returns an authentication error, the package is still private. Authenticate with a token that has `read:packages`:
 
@@ -130,7 +130,7 @@ python3 start.py --host 0.0.0.0 --port 8080 --no-browser
 
 On Windows, double-click `start.bat`, or run `py -3 start.py`.
 
-The launcher serves the app on the first free port in **8080–8099** unless `--port` is supplied. Open the site through the server, not as a `file://` URL.
+The launcher serves the app on the first free port in **8080–8099** unless `--port` is supplied. Open the site through the server, not as a `file://` URL. `--host 0.0.0.0` exposes it to the LAN; open it with the machine's IP address or a local hostname. A public DNS hostname must be added to `ESXTOP_ALLOWED_HOSTS` or `ESXTOP_PUBLIC_HOST`.
 
 ### Upload password and public exposure
 
@@ -176,7 +176,7 @@ When the variable is set:
 
 The upload password protects **file upload**, not the entire application. The bundled demo, static assets, health endpoint and session-based chart API remain reachable. If that is not acceptable, use reverse-proxy authentication for the whole site.
 
-If the import page reports “Could not reach the analysis server”, verify that the container/server is running, the URL and port are reachable from the browser, and any reverse proxy forwards `X-ESXTOP-Upload-Password`, permits the upload body size, and has a read timeout longer than the upload. If it reports “upload password was rejected”, re-check the exact value in `ESXTOP_UPLOAD_PASSWORD` and the password typed into the page.
+If the import page reports “Could not reach the analysis server”, verify that the container/server is running, the URL and port are reachable from the browser, and any reverse proxy forwards `X-ESXTOP-Upload-Password`, permits the upload body size, and has a read timeout longer than the upload. If it reports “upload password was rejected”, re-check the exact value in `ESXTOP_UPLOAD_PASSWORD` and the password typed into the page. If it reports a cross-origin error after the page loads (including when using the demo), the browser-visible hostname is not trusted: open the app via `localhost`/LAN IP, or add that exact hostname to `ESXTOP_ALLOWED_HOSTS` and recreate the container. A reverse proxy must preserve the browser-visible `Host` header; if it rewrites `Host` to an internal name, configure it to pass the original value.
 
 A quick password/proxy check from the machine running the browser:
 
@@ -466,13 +466,13 @@ The current all-metric defaults admit captures up to 200,000 metric columns:
 | Series per value request | 200 | `ESXTOP_MAX_REQUEST_SERIES` |
 | Cells per value request | 5,000,000 | `ESXTOP_MAX_REQUEST_CELLS` |
 | Upload password | unset (no gate) | `ESXTOP_UPLOAD_PASSWORD` |
-| Allowed Host/Origin names | `localhost`, `127.0.0.1`, `[::1]` | `ESXTOP_ALLOWED_HOSTS`, `ESXTOP_PUBLIC_HOST` |
+| Allowed Host/Origin names | `localhost`, loopback, IP literals, single-label and local hostnames | `ESXTOP_ALLOWED_HOSTS`, `ESXTOP_PUBLIC_HOST` |
 
 Rows with more fields than the header and physical lines above `ESXTOP_MAX_LINE_MB` are rejected with **413** before the CSV parser can materialise an unbounded field list. Header fields are counted and capped against `ESXTOP_MAX_SERIES` before any column objects are built. Truncated rows with fewer fields are still padded and reported as a warning.
 
 When `ESXTOP_UPLOAD_PASSWORD` is set, `POST /api/analyze` requires the matching `X-ESXTOP-Upload-Password` header. The browser import page prompts for it and keeps it in `sessionStorage` for the tab. The password is compared server-side with a constant-time comparison and is never embedded in the frontend bundle. Five failed attempts from one client IP within 60 seconds return **429** with `Retry-After: 60` until the window expires, so the password cannot be brute-forced at full request speed. Stale failure buckets are pruned and the per-IP map is bounded, so spoofed addresses cannot grow it without limit; behind a reverse proxy all requests appear to come from the proxy address, so the throttle is shared. Add proxy-level rate limiting as well.
 
-Requests with an `Origin` header must match the request `Host` exactly on scheme host and port, and the `Host` name must be on the allowlist. The defaults are `localhost`, `127.0.0.1` and `[::1]`; set `ESXTOP_ALLOWED_HOSTS` (comma-separated) or `ESXTOP_PUBLIC_HOST` when the app is reached through another hostname or reverse proxy. DNS-rebinding-style Host values and `Origin: null` are rejected. This is an application-level check, not a substitute for TLS and proxy authentication.
+Requests with an `Origin` header must match the request `Host` exactly on scheme host and port, and the `Host` name must be trusted. `localhost`, loopback addresses, IP literals, single-label names and local-only suffixes (`.localhost`, `.local`, `.lan`, `.home.arpa`, `.internal`) are trusted by default, so direct LAN access works without configuration. Other DNS hostnames require `ESXTOP_ALLOWED_HOSTS` (comma-separated) or `ESXTOP_PUBLIC_HOST`, which `compose.yaml` forwards from `.env`; use them when the app is reached through a public hostname or a reverse proxy that rewrites the `Host` header. DNS-rebinding-style Host values such as `localhost.evil.example` and `127.0.0.1.nip.io`, mismatched origins, and `Origin: null` are rejected. If the UI reports a cross-origin error, open the app via `localhost` or its LAN IP, or add the browser-visible hostname to the allowlist. This is an application-level check, not a substitute for TLS and proxy authentication.
 
 Only `ESXTOP_MAX_CONCURRENT_ANALYSES` uploads are parsed at once (default **1**). A second upload receives **429** rather than competing for memory with a large analysis. Raise this only when the container has enough RAM and `/tmp` for multiple simultaneous captures.
 

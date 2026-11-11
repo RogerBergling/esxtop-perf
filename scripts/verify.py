@@ -159,6 +159,8 @@ def main() -> int:
     check('ESXTOP_MAX_CONCURRENT_ANALYSES' in compose, "compose does not pass ESXTOP_MAX_CONCURRENT_ANALYSES")
     check('ESXTOP_MAX_CONCURRENT_REQUESTS' in compose, "compose does not pass ESXTOP_MAX_CONCURRENT_REQUESTS")
     check('ESXTOP_REQUEST_TIMEOUT_SECONDS' in compose, "compose does not pass ESXTOP_REQUEST_TIMEOUT_SECONDS")
+    check('ESXTOP_ALLOWED_HOSTS' in compose, "compose does not pass ESXTOP_ALLOWED_HOSTS")
+    check('ESXTOP_PUBLIC_HOST' in compose, "compose does not pass ESXTOP_PUBLIC_HOST")
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
     check("ESXTOP_UPLOAD_PASSWORD" in env_example, ".env.example lacks ESXTOP_UPLOAD_PASSWORD")
     check("ESXTOP_MAX_CONCURRENT_REQUESTS" in env_example, ".env.example lacks ESXTOP_MAX_CONCURRENT_REQUESTS")

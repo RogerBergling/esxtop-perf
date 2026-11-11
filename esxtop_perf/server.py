@@ -12,6 +12,7 @@ import argparse
 import contextlib
 import gzip
 import http.server
+import ipaddress
 import json
 import signal
 import socket
@@ -36,6 +37,7 @@ WEB_ROOT_REAL = WEB_ROOT.resolve()
 DEMO_FILE = WEB_ROOT / "demo" / "esxtop-demo.csv"
 PORT_RANGE = range(8080, 8100)
 NO_CACHE = "no-store, no-cache, must-revalidate, max-age=0"
+LOCAL_HOST_SUFFIXES = (".localhost", ".local", ".lan", ".home.arpa", ".internal")
 
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
@@ -115,6 +117,38 @@ def _authority(value: str | None) -> tuple[str, int | None] | None:
     return _normalize_host(hostname), port
 
 
+def _is_ip_literal(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
+def host_allowed(host_name: str) -> bool:
+    """Return whether a Host name is safe to accept.
+
+    The explicit allowlist defends against DNS rebinding: an attacker-owned
+    public domain that resolves to this server must not become trusted just
+    because the browser sends a matching Origin. IP literals, single-label
+    names and local-only suffixes cannot be registered in public DNS, so they
+    are accepted to keep direct LAN and desktop access working without
+    configuration. Other hostnames must be added with ESXTOP_ALLOWED_HOSTS or
+    ESXTOP_PUBLIC_HOST.
+    """
+
+    host = _normalize_host(host_name)
+    if not host:
+        return False
+    if host in config.allowed_hosts():
+        return True
+    if _is_ip_literal(host):
+        return True
+    if "." not in host:
+        return True
+    return host.endswith(LOCAL_HOST_SUFFIXES)
+
+
 def origin_allowed(origin: str | None, host_header: str | None) -> bool:
     """Validate Host and Origin against the explicit host allowlist."""
 
@@ -122,7 +156,7 @@ def origin_allowed(origin: str | None, host_header: str | None) -> bool:
     if authority is None:
         return False
     host_name, host_port = authority
-    if host_name not in config.allowed_hosts():
+    if not host_allowed(host_name):
         return False
     if not origin:
         return True
@@ -145,7 +179,7 @@ def origin_allowed(origin: str | None, host_header: str | None) -> bool:
     ):
         return False
     origin_name = _normalize_host(origin_host)
-    if origin_name not in config.allowed_hosts() or origin_name != host_name:
+    if not host_allowed(origin_name) or origin_name != host_name:
         return False
     default_port = 443 if parsed.scheme == "https" else 80
     return (origin_port or default_port) == (host_port or default_port)
@@ -357,7 +391,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _origin_ok(self) -> bool:
         if not origin_allowed(self.headers.get("Origin"), self.headers.get("Host")):
             self.close_connection = True
-            self._send_json({"ok": False, "error": "Cross-origin requests are not allowed."}, status=403)
+            self._send_json(
+                {
+                    "ok": False,
+                    "error": (
+                        "Cross-origin requests are not allowed. Open the app through "
+                        "localhost, a LAN IP or a local hostname, or add the hostname "
+                        "to ESXTOP_ALLOWED_HOSTS."
+                    ),
+                },
+                status=403,
+            )
             return False
         return True
 

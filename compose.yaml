@@ -29,6 +29,10 @@ services:
       ESXTOP_MAX_CONCURRENT_ANALYSES: "${ESXTOP_MAX_CONCURRENT_ANALYSES:-1}"
       ESXTOP_MAX_CONCURRENT_REQUESTS: "${ESXTOP_MAX_CONCURRENT_REQUESTS:-32}"
       ESXTOP_REQUEST_TIMEOUT_SECONDS: "${ESXTOP_REQUEST_TIMEOUT_SECONDS:-120}"
+      # Direct localhost/LAN IP access works without these. Set one of them in
+      # .env when the app is reached through a DNS hostname or reverse proxy.
+      ESXTOP_ALLOWED_HOSTS: "${ESXTOP_ALLOWED_HOSTS:-}"
+      ESXTOP_PUBLIC_HOST: "${ESXTOP_PUBLIC_HOST:-}"
       # Leave empty for a private instance. Set a strong value in .env before
       # exposing the upload page outside localhost/LAN.
       ESXTOP_UPLOAD_PASSWORD: "${ESXTOP_UPLOAD_PASSWORD:-}"
