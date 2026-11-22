@@ -62,6 +62,27 @@ docker compose up -d --force-recreate
 
 That is the whole first-run path. The rest of this README is the detailed reference: local Python setup, security, capture internals, sizing, API, architecture and validation.
 
+## Theme modes
+
+`APP_THEME` sets the first-visit theme. The theme toggle saves the visitor's
+explicit choice, which overrides this default.
+
+| Value | Behavior |
+|---|---|
+| `dark` | Dark theme (default) |
+| `light` | Light/white theme |
+| `system` | Follow the browser/OS `prefers-color-scheme` |
+
+Set it in `.env` or Compose:
+
+```yaml
+environment:
+  APP_THEME: ${APP_THEME:-dark}
+```
+
+Invalid values fall back to `dark`. The default is served by `/theme.js` and
+applied before first paint, so there is no theme flash.
+
 ## Screenshots
 
 | Dark control room | Light theme |

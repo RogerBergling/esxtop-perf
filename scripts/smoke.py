@@ -104,6 +104,7 @@ class SmokeTests(unittest.TestCase):
             ("/assets/css/app.css", "--accent"),
             ("/docs/esxtop-field-guide.md", "esxtop -b -a"),
             ("/version.json", "version"),
+            ("/theme.js", "window.__APP_THEME__"),
             ("/api/health", '"limits"'),
         ]:
             with self.subTest(path=path):

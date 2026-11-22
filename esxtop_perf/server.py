@@ -316,8 +316,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return str(WEB_ROOT_REAL / "__not_found__")
         return translated
 
+    def _serve_theme(self) -> None:
+        body = f'window.__APP_THEME__ = "{config.app_theme()}";\n'.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/javascript; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                self.wfile.write(body)
+
     def do_GET(self) -> None:  # noqa: N802
         path = urllib.parse.urlparse(self.path).path
+        if path == "/theme.js":
+            self._serve_theme()
+            return
         if path == "/api/health":
             self._send_json(
                 {
@@ -343,6 +356,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_HEAD(self) -> None:  # noqa: N802
         path = urllib.parse.urlparse(self.path).path
+        if path == "/theme.js":
+            self._serve_theme()
+            return
         if path.startswith("/api/"):
             self.send_response(200 if path in {"/api/health", "/api/demo"} else 404)
             self.send_header("Content-Type", "application/json; charset=utf-8")

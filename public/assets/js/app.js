@@ -65,7 +65,12 @@ const NAV_ITEMS = [
 function initialTheme() {
   const saved = localStorage.getItem(THEME_KEY);
   if (saved === 'dark' || saved === 'light') return saved;
-  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  const configured = window.__APP_THEME__;
+  if (configured === 'light' || configured === 'dark') return configured;
+  if (configured === 'system') {
+    return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+  return 'dark';
 }
 
 function applyTheme(theme) {

@@ -19,6 +19,8 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=2g
     environment:
+      # First-visit theme: dark, light or system. A saved toggle choice wins.
+      APP_THEME: "${APP_THEME:-dark}"
       ESXTOP_MAX_UPLOAD_MB: "${ESXTOP_MAX_UPLOAD_MB:-512}"
       ESXTOP_MAX_DECOMPRESSED_MB: "${ESXTOP_MAX_DECOMPRESSED_MB:-1536}"
       ESXTOP_MAX_CELLS: "${ESXTOP_MAX_CELLS:-20000000}"

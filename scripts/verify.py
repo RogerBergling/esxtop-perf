@@ -75,6 +75,8 @@ def main() -> int:
     index = (ROOT / "public/index.html").read_text(encoding="utf-8")
     check("/assets/css/app.css" in index, "index.html does not load the stylesheet")
     check("/assets/js/app.js" in index, "index.html does not load the app module")
+    check("/theme.js" in index, "index.html does not load the runtime theme default")
+    check("/assets/js/theme-init.js" in index, "index.html does not load the pre-paint theme init")
     check("ESXtop Lens" in index, "index.html title/brand missing")
     check("noscript" in index, "index.html should keep a noscript warning")
     check("data-build-number" in index, "index.html lacks the build number slot")

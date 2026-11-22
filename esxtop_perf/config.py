@@ -152,6 +152,14 @@ def request_timeout_seconds() -> int:
     return _int("ESXTOP_REQUEST_TIMEOUT_SECONDS", 120)
 
 
+def app_theme() -> str:
+    """Return the first-visit theme: dark, light or system."""
+
+    value = os.environ.get("APP_THEME", "dark").strip().lower()
+    value = {"auto": "system", "white": "light"}.get(value, value)
+    return value if value in {"dark", "light", "system"} else "dark"
+
+
 def upload_password() -> str:
     """Return the optional upload password.
 
