@@ -1,5 +1,7 @@
 # ESXtop Lens
 
+**Project facts (2026-11-25):** version **1.8.5** · Python 3.10+ standard-library server + browser SPA · 55 unit tests, 285 static checks, 11 smoke tests · MIT licensed.
+
 [![CI](https://github.com/RogerBergling/esxtop-perf/actions/workflows/ci.yml/badge.svg)](https://github.com/RogerBergling/esxtop-perf/actions/workflows/ci.yml)
 [![Publish Docker image](https://github.com/RogerBergling/esxtop-perf/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/RogerBergling/esxtop-perf/actions/workflows/docker-publish.yml)
 
@@ -89,7 +91,7 @@ applied before first paint, so there is no theme flash.
 | --- | --- |
 | ![Overview in dark theme](docs/screenshots/overview-dark.png) | ![Overview in light theme](docs/screenshots/overview-light.png) |
 
-Both screenshots use the bundled synthetic demo capture. The demo contains intentional CPU, memory, NUMA, storage and network pressure so every state can be inspected without a real ESXi host.
+Both screenshots use the bundled synthetic demo capture. The demo contains intentional CPU, memory, NUMA, storage and network pressure so every state can be inspected without a real ESXi host. The dark capture shows a 1.8.4 build badge; the current application version is 1.8.5. Regenerate the capture when a browser is available.
 
 ## What it does
 

@@ -311,7 +311,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def translate_path(self, path: str) -> str:  # noqa: N802
         translated = super().translate_path(path)
-        resolved = Path(translated).resolve()
+        try:
+            resolved = Path(translated).resolve()
+        except (OSError, ValueError, UnicodeError):
+            # Null bytes and over-long paths must produce a normal 404, not
+            # an uncaught exception and a dropped connection.
+            return str(WEB_ROOT_REAL / "__not_found__")
         if resolved != WEB_ROOT_REAL and WEB_ROOT_REAL not in resolved.parents:
             return str(WEB_ROOT_REAL / "__not_found__")
         return translated
@@ -434,6 +439,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json({"ok": False, "error": "Invalid Content-Length."}, status=400)
             return None
         if length <= 0:
+            self.close_connection = True
             self._send_json({"ok": False, "error": "The request body is empty."}, status=400)
             return None
         if maximum is not None and length > maximum:
